@@ -46,7 +46,7 @@
 - 🔑 **API Key اختصاصی** — کلیدهای مستقل با رهگیری مصرف
 - 💾 **ذخیره‌سازی روی KV** — بدون نیاز به دیتابیس خارجی
 - 🌊 **پشتیبانی از Stream** — پاسخ‌های SSE به سبک OpenAI
-- 📦 **بدون Environment Variable** — همه چیز در KV ذخیره می‌شود
+- 🔐 **راه‌اندازی امن** — رمز پنل در اولین اجرا تعریف می‌شود و مقدار `ADMIN_SETUP_SECRET` فقط برای راه‌اندازی اولیه لازم است
 - 🔄 **سازگاری کامل** — با هر کلاینت OpenAI-compatible (NextChat، LobeChat، Cursor، Continue.dev و ...)
 - 🌐 **CORS کامل** — برای استفاده در مرورگر و اپلیکیشن‌های وب
 
@@ -107,6 +107,7 @@
 3. Variable name: `GROK_KV`
 4. KV namespace: `GROK_KV`
 5. Save
+6. Under **Variables and Secrets**, add a secret named `ADMIN_SETUP_SECRET` with at least 32 random characters (for example, generate one with `openssl rand -hex 32`). Keep it private; it is used only to initialize the admin password.
 
 ### گام ۴: آپلود کد
 
@@ -122,9 +123,7 @@
 https://YOUR-WORKER.workers.dev/admin
 ```
 
-**پسورد پیش‌فرض:** `123456`
-
-> ⚠️ **مهم:** بلافاصله بعد از ورود، از تب **تنظیمات** پسورد را تغییر دهید!
+**راه‌اندازی اولیه:** در اولین ورود، راز یک‌بارمصرف `ADMIN_SETUP_SECRET` را که در تنظیمات Cloudflare قرار داده‌اید وارد کنید و یک رمز مدیریتی حداقل ۱۲ نویسه‌ای بسازید. رمز پیش‌فرضی وجود ندارد. اگر نصب قبلی‌تان بدون ذخیرهٔ `auth:password` به رمز قدیمی `123456` متکی بود، قبل از به‌روزرسانی `ADMIN_SETUP_SECRET` را تنظیم کنید و پس از استقرار رمز جدید بسازید؛ نصب‌هایی که `auth:password` در KV دارند، با همان رمز موجود وارد می‌شوند.
 
 ---
 
@@ -141,7 +140,7 @@ https://YOUR-WORKER.workers.dev/admin
 | Endpoint | Method | توضیح |
 |----------|--------|-------|
 | `/v1/chat/completions` | POST | چت با مدل‌های Grok |
-| `/v1/models` | GET | لیست تمام مدل‌ها |
+| `/v1/models` | GET | فقط مدل‌های رایگان/شامل پلن که وضعیتشان تأیید شده |
 | `/v1/models?capability=text` | GET | فقط مدل‌های متنی |
 | `/admin` | GET | پنل ادمین |
 
@@ -199,7 +198,7 @@ console.log(response.choices[0].message.content);
 
 ## 🎛️ پنل ادمین
 
-پنل ادمین شامل سه تب اصلی است:
+پنل ادمین شامل تب‌های **اکانت‌ها، API Keys، Models (فهرست زنده و وضعیت دسترسی)** و **تنظیمات** است.
 
 ### ۱. تب اکانت‌ها
 
@@ -253,45 +252,9 @@ b1a00492-073a-47ea-816f-4c329264a828
 
 ## 📋 لیست مدل‌ها
 
-پروکسی شامل ۲۹ مدل هاردکد شده است:
+لیست مدل‌ها هر ۵ دقیقه از سرویس اصلی دریافت و cache می‌شود. پیش از دریافت فهرست، پروژه وضعیت اشتراک حساب را از `/v1/user?include=subscription` می‌خواند. برای حساب Free، فهرست خود `/v1/models` به‌عنوان کاتالوگ همان سطح دسترسی استفاده می‌شود؛ مدل‌های مخفی یا پشتیبانی‌نشده برای API حذف می‌شوند. برای حساب‌های غیر Free، فقط مدل‌هایی نمایش داده می‌شوند که خود upstream صراحتاً رایگان/شامل پلن علامت‌گذاری کرده باشد. مدل‌های پولی یا نامشخص از روی اسم‌شان حدس زده نمی‌شوند و endpoint چت نیز همین فهرست را اجباری می‌کند.
 
-### مدل‌های متنی پیشرفته
-
-| مدل | Context | قابلیت‌ها |
-|-----|---------|----------|
-| `grok-4.7` | 500K | text, image, reasoning, tools |
-| `grok-4.6` | 500K | text, image, reasoning, tools |
-| `grok-4.5` | 500K | text, image, reasoning, tools |
-| `grok-4.3` | 1M | text, image, reasoning, tools |
-| `grok-4.20-reasoning` | 1M | text, image, reasoning, tools |
-| `grok-4.20-non-reasoning` | 1M | text, image, tools |
-| `grok-4` | 131K | text, image, reasoning, tools |
-| `grok-4-1-fast-reasoning` | 2M | text, reasoning, tools |
-| `grok-4-1-fast-non-reasoning` | 2M | text, tools |
-| `grok-3` | 131K | text, tools |
-| `grok-3-mini` | 131K | text, reasoning, tools |
-| `grok-build-0.1` | 256K | text, reasoning, tools |
-| `grok-code-fast-1` | 131K | text, tools |
-
-### مدل‌های تصویری
-
-- `grok-imagine-image`
-- `grok-imagine-image-quality`
-- `grok-imagine-image-2.0`
-- `grok-2-image-1212`
-
-### مدل‌های ویدیویی
-
-- `grok-imagine-video`
-- `grok-imagine-video-1.5`
-
-### مدل‌های صوتی
-
-- `grok-voice-think-fast-2.0`
-
-> 📝 برای مشاهده لیست کامل، به `/v1/models` درخواست بزنید.
-
----
+اگر حساب غیر Free باشد و سرویس اصلی برای مدل‌ها اطلاعات صریح رایگان‌بودن ندهد، پروژه به‌جای نمایش احتمالی مدل‌های پولی، خطای مناسب برمی‌گرداند. در پنل ادمین، تب **Models** وضعیت همگام‌سازی، تعداد مدل‌های تأییدشده و تعداد حساب‌های Free/حذف‌شده را نشان می‌دهد.
 
 ## 🧪 مثال‌های استفاده
 
@@ -371,7 +334,7 @@ Model: grok-4.7
 
 ### نکات امنیتی
 
-- ✅ پسورد پیش‌فرض را فوراً تغییر دهید
+- ✅ در راه‌اندازی اولیه رمز مدیریتی قوی (حداقل ۱۲ نویسه) تعیین کنید
 - ✅ از HTTPS استفاده کنید (Cloudflare به‌صورت خودکار فراهم می‌کند)
 - ✅ API Keyها را در جای امن نگه دارید
 - ⚠️ این پروکسی برای استفاده شخصی طراحی شده، برای محیط‌های عمومی از احراز هویت قوی‌تر استفاده کنید
@@ -517,7 +480,7 @@ SOFTWARE.
 - 🔑 **Dedicated API Keys** — Independent keys with usage tracking
 - 💾 **KV Storage** — No external database required
 - 🌊 **Stream Support** — OpenAI-style SSE responses
-- 📦 **Zero Environment Variables** — Everything stored in KV
+- 🔐 **Secure first-run setup** — create the admin password on first launch; `ADMIN_SETUP_SECRET` is required only for initial setup
 - 🔄 **Full Compatibility** — Works with any OpenAI-compatible client (NextChat, LobeChat, Cursor, Continue.dev, etc.)
 - 🌐 **Full CORS** — Ready for browsers and web applications
 
@@ -593,9 +556,7 @@ Navigate to:
 https://YOUR-WORKER.workers.dev/admin
 ```
 
-**Default password:** `123456`
-
-> ⚠️ **Important:** Change the password immediately after first login via the **Settings** tab!
+**Initial setup:** On first visit, enter your one-time `ADMIN_SETUP_SECRET` from Cloudflare settings and create an admin password of at least 12 characters. The setup secret is not used for routine logins. There is no default password. Existing deployments that relied on the implicit `123456` password must configure `ADMIN_SETUP_SECRET` before upgrading and complete setup; deployments that already have `auth:password` stored in KV keep using that saved password.
 
 ---
 
@@ -612,7 +573,7 @@ https://YOUR-WORKER.workers.dev/admin
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/chat/completions` | POST | Chat with Grok models |
-| `/v1/models` | GET | List all models |
+| `/v1/models` | GET | List only models whose free/included status is explicitly verified |
 | `/v1/models?capability=text` | GET | Text models only |
 | `/admin` | GET | Admin panel |
 
@@ -670,7 +631,7 @@ console.log(response.choices[0].message.content);
 
 ## 🎛️ Admin Panel
 
-The admin panel consists of three main tabs:
+The admin panel includes Accounts, API Keys, Models (live eligibility/sync status), and Settings tabs.
 
 ### 1. Accounts Tab
 
@@ -724,45 +685,9 @@ The proxy sends all requests to xAI with the following headers:
 
 ## 📋 Model List
 
-The proxy includes 29 hardcoded models:
+The model catalogue is fetched from the upstream every five minutes and cached briefly. Before listing models, the proxy checks the account tier through `/v1/user?include=subscription`. For a Free account, the upstream `/v1/models` response is treated as the tier-specific catalogue; entries marked hidden or unsupported by the API are removed. For non-Free accounts, only models explicitly marked free/included by upstream metadata are exposed. Paid or unknown models are never guessed from their names, and the chat endpoint enforces the same allow-list.
 
-### Advanced Text Models
-
-| Model | Context | Capabilities |
-|-------|---------|--------------|
-| `grok-4.7` | 500K | text, image, reasoning, tools |
-| `grok-4.6` | 500K | text, image, reasoning, tools |
-| `grok-4.5` | 500K | text, image, reasoning, tools |
-| `grok-4.3` | 1M | text, image, reasoning, tools |
-| `grok-4.20-reasoning` | 1M | text, image, reasoning, tools |
-| `grok-4.20-non-reasoning` | 1M | text, image, tools |
-| `grok-4` | 131K | text, image, reasoning, tools |
-| `grok-4-1-fast-reasoning` | 2M | text, reasoning, tools |
-| `grok-4-1-fast-non-reasoning` | 2M | text, tools |
-| `grok-3` | 131K | text, tools |
-| `grok-3-mini` | 131K | text, reasoning, tools |
-| `grok-build-0.1` | 256K | text, reasoning, tools |
-| `grok-code-fast-1` | 131K | text, tools |
-
-### Image Models
-
-- `grok-imagine-image`
-- `grok-imagine-image-quality`
-- `grok-imagine-image-2.0`
-- `grok-2-image-1212`
-
-### Video Models
-
-- `grok-imagine-video`
-- `grok-imagine-video-1.5`
-
-### Audio Models
-
-- `grok-voice-think-fast-2.0`
-
-> 📝 Request `/v1/models` for the full list.
-
----
+If a non-Free account's model response has no explicit free/included metadata, the proxy returns a clear error instead of risking advertising paid models. The admin panel's **Models** tab shows sync status, verified model count, and the number of Free vs. excluded accounts.
 
 ## 🧪 Usage Examples
 
@@ -842,7 +767,7 @@ Model: grok-4.7
 
 ### Security Notes
 
-- ✅ Change the default password immediately
+- ✅ Set a strong initial admin password (at least 12 characters) during first-run setup
 - ✅ Use HTTPS (Cloudflare provides automatically)
 - ✅ Keep API keys in a secure location
 - ⚠️ This proxy is designed for personal use; use stronger authentication for public environments

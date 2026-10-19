@@ -1,0 +1,13 @@
+{
+  "name": "grok-cli2api",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker proxy for Grok CLI with an OpenAI-compatible API",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check worker.js"
+  }
+}
