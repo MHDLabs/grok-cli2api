@@ -1452,6 +1452,13 @@ export default {
 
         // ================= OPENAI-COMPATIBLE API =================
         if (path === '/v1/chat/completions' || path === '/v1/models') {
+            if (path === '/v1/models' && request.method !== 'GET') {
+                return json({ error: { message: 'Use GET for /v1/models.', type: 'invalid_request_error', code: 'method_not_allowed' } }, 405);
+            }
+            if (path === '/v1/chat/completions' && request.method !== 'POST') {
+                return json({ error: { message: 'Use POST for /v1/chat/completions.', type: 'invalid_request_error', code: 'method_not_allowed' } }, 405);
+            }
+
             // Validate API key
             const authed = await validateApiKey(env, request.headers.get('Authorization'));
             if (!authed) {
