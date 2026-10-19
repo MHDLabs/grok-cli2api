@@ -258,3 +258,38 @@ test('constant-time comparison helper rejects mismatched setup secrets', () => {
   assert.equal(constantTimeEqual('same-secret', 'same-secret'), true);
   assert.equal(constantTimeEqual('same-secret', 'different-secret'), false);
 });
+
+test('cross-origin admin mutations are rejected before auth or state changes', async () => {
+  const env = makeEnv();
+  const before = JSON.parse(await env.GROK_KV.get('apikeys:list'));
+  const response = await worker.fetch(new Request('https://proxy.example.test/admin/api/keys', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://attacker.example',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ label: 'attacker-key' }),
+  }), env);
+  assert.equal(response.status, 403);
+  assert.deepEqual(JSON.parse(await env.GROK_KV.get('apikeys:list')), before);
+});
+
+test('admin API never returns stored API key material', async () => {
+  const env = makeEnv();
+  await env.GROK_KV.put('auth:password', JSON.stringify('strong test password 123'));
+  const login = await worker.fetch(new Request('https://proxy.example.test/admin/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'strong test password 123' }),
+  }), env);
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+
+  const response = await worker.fetch(new Request('https://proxy.example.test/admin/api/keys', {
+    headers: { Cookie: cookie },
+  }), env);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.keys[0].key, undefined);
+  assert.equal(payload.keys[0].masked_key, 'gk_test…test');
+});
