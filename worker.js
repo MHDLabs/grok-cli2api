@@ -7,7 +7,7 @@
 //    • OAuth 2.0 Device Code Flow for Grok CLI login
 //    • Multi-account support with automatic Round-Robin
 //    • Dedicated API keys with usage tracking
-//    • KV-only storage (no environment variables required)
+//    • KV storage with a one-time deployment secret for safe first-run setup
 //    • Full /v1/chat/completions and /v1/models endpoints
 //
 //  Repository: https://github.com/MHDLabs/grok-cli2api
@@ -209,14 +209,14 @@ async function oauthDeviceStart(env) {
         
 
         if (!res.ok) {
-            return { error: 'device_code_request_failed', status: res.status, raw: text };
+            return { error: 'device_code_request_failed', status: res.status };
         }
 
         let data;
         try {
             data = JSON.parse(text);
         } catch {
-            
+            return { error: 'invalid_json', status: res.status };
         }
 
         if (data.user_code && !data.verification_uri_complete) {
@@ -252,7 +252,7 @@ async function oauthDevicePoll(env, deviceCode) {
         try {
             return JSON.parse(text);
         } catch {
-            
+            return { error: 'invalid_json', status: res.status };
         }
     } catch (e) {
         return { error: 'exception', message: String(e) };
@@ -722,7 +722,7 @@ function adminPage() {
     <div class="login-box">
     <div class="logo-icon" style="margin:0 auto 16px;width:48px;height:48px;font-size:22px;">&#128274;</div>
     <h1>Secure your panel</h1>
-    <p>Create the first admin password. Use at least 12 characters.</p>
+    <p>Enter the one-time Cloudflare setup secret, then create an admin password (12+ characters).</p>
     <input type="password" id="setupSecret" autocomplete="off" placeholder="One-time setup secret" style="margin-bottom:10px;">
     <input type="password" id="setupPass" autocomplete="new-password" placeholder="New admin password (12+ chars)">
     <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="doSetup()">Set password</button>
