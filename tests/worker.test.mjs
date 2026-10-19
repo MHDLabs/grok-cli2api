@@ -206,7 +206,7 @@ test('first-run setup requires the deployment secret and a strong password', asy
   }), env);
   assert.equal(good.status, 200);
   assert.equal((await good.json()).ok, true);
-  assert.equal(await env.GROK_KV.get('auth:password'), 'a-long-random-password');
+  assert.equal(JSON.parse(await env.GROK_KV.get('auth:password')), 'a-long-random-password');
   assert.match(good.headers.get('set-cookie'), /HttpOnly/);
   assert.match(good.headers.get('set-cookie'), /SameSite=Strict/);
 });
