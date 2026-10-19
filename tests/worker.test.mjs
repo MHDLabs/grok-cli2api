@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import worker, {
+  constantTimeEqual,
   explicitFreeState,
-  modeAvailability,
+  isApiModelSelectable,
   normalizeModelPayload,
+  subscriptionTierStatus,
   grokHeaders,
 } from '../worker.js';
 
@@ -42,11 +44,19 @@ test('free eligibility fails closed when upstream metadata is missing', () => {
   assert.equal(explicitFreeState({ id: 'paid-b', billingTier: 'premium' }), false);
 });
 
-test('mode availability is not itself treated as proof that a model is free', () => {
-  assert.equal(modeAvailability({ availability: { available: {} } }), 'available');
-  assert.equal(modeAvailability({ availability: { requiresUpgrade: {} } }), 'blocked');
-  assert.equal(modeAvailability({ availability: {} }), 'unknown');
-  assert.equal(explicitFreeState({ id: 'accessible-but-unknown' }), null);
+test('free-tier detection uses the upstream subscription field, not model names', () => {
+  assert.deepEqual(subscriptionTierStatus({}), { isFreeTier: true, tier: 'Free', tierReported: false });
+  assert.deepEqual(subscriptionTierStatus({ subscriptionTier: 'Free' }), { isFreeTier: true, tier: 'Free', tierReported: true });
+  assert.equal(subscriptionTierStatus({ subscriptionTier: 'SuperGrok Pro' }).isFreeTier, false);
+  assert.equal(subscriptionTierStatus({ subscriptionTier: 5 }).isFreeTier, false);
+  assert.equal(explicitFreeState({ id: 'grok-4-something' }), null);
+});
+
+test('API model catalog omits explicitly hidden or API-unsupported entries', () => {
+  assert.equal(isApiModelSelectable({ id: 'shown-model' }), true);
+  assert.equal(isApiModelSelectable({ id: 'hidden-model', hidden: true }), false);
+  assert.equal(isApiModelSelectable({ id: 'not-for-api', supportedInApi: false }), false);
+  assert.equal(isApiModelSelectable({ id: 'meta-hidden', _meta: { hidden: true } }), false);
 });
 
 function makeEnv() {
@@ -72,30 +82,21 @@ function makeEnv() {
   };
 }
 
-function mockUpstream() {
+function mockUpstream({ tier = 'Free', models = [
+  { id: 'free-model', capabilities: ['text'] },
+  { id: 'hidden-model', hidden: true, capabilities: ['text'] },
+  { id: 'unsupported-model', supportedInApi: false, capabilities: ['text'] },
+] } = {}) {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
-    if (url === 'https://cli-chat-proxy.grok.com/v1/models') {
-      return Response.json({
-        object: 'list',
-        data: [
-          { id: 'free-model', is_free: true, capabilities: ['text'] },
-          { id: 'paid-model', is_free: false, capabilities: ['text'] },
-          { id: 'unknown-model', capabilities: ['text'] },
-        ],
-      });
+    if (url === 'https://cli-chat-proxy.grok.com/v1/user?include=subscription') {
+      return Response.json(tier === null ? { userId: 'test-user' } : { userId: 'test-user', subscriptionTier: tier });
     }
-    if (url === 'https://grok.com/rest/modes') {
-      return Response.json({
-        modes: [
-          { id: 'free-model', availability: { available: {} } },
-          { id: 'paid-model', availability: { requiresUpgrade: {} } },
-          { id: 'unknown-model', availability: { available: {} } },
-        ],
-      });
+    if (url === 'https://cli-chat-proxy.grok.com/v1/models') {
+      return Response.json({ object: 'list', data: models });
     }
     if (url === 'https://cli-chat-proxy.grok.com/v1/chat/completions') {
       return Response.json({
@@ -120,7 +121,7 @@ function apiRequest(path, body) {
   });
 }
 
-test('public models endpoint returns only explicitly free models with eligible account access', async () => {
+test('public models endpoint returns the Free account live catalog and omits unavailable entries', async () => {
   const env = makeEnv();
   const upstream = mockUpstream();
   try {
@@ -128,6 +129,48 @@ test('public models endpoint returns only explicitly free models with eligible a
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.deepEqual(payload.data.map(model => model.id), ['free-model']);
+    const userCall = upstream.calls.find(call => call.url.endsWith('/v1/user?include=subscription'));
+    assert.ok(userCall);
+    assert.equal(userCall.init.headers['User-Agent'], 'grok-shell/1.0.44 (linux; x86_64)');
+    assert.equal(userCall.init.headers['x-grok-client-identifier'], 'grok-shell');
+    assert.equal(userCall.init.headers['x-grok-client-version'], '1.0.44');
+    assert.ok(upstream.calls.some(call => call.url.endsWith('/v1/models')));
+  } finally {
+    upstream.restore();
+  }
+});
+
+test('paid accounts expose only models explicitly marked free/included', async () => {
+  const env = makeEnv();
+  const upstream = mockUpstream({
+    tier: 'SuperGrok Pro',
+    models: [
+      { id: 'paid-model', is_free: false, capabilities: ['text'] },
+      { id: 'explicit-free-model', is_free: true, capabilities: ['text'] },
+      { id: 'unknown-model', capabilities: ['text'] },
+    ],
+  });
+  try {
+    const response = await worker.fetch(apiRequest('/v1/models'), env);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.data.map(model => model.id), ['explicit-free-model']);
+  } finally {
+    upstream.restore();
+  }
+});
+
+test('paid account with no explicit free metadata does not advertise its paid catalogue', async () => {
+  const env = makeEnv();
+  const upstream = mockUpstream({
+    tier: 'SuperGrok Pro',
+    models: [{ id: 'paid-only-model', capabilities: ['text'] }],
+  });
+  try {
+    const response = await worker.fetch(apiRequest('/v1/models'), env);
+    assert.equal(response.status, 503);
+    const payload = await response.json();
+    assert.equal(payload.error.code, 'free_model_catalog_unavailable');
   } finally {
     upstream.restore();
   }
@@ -211,8 +254,7 @@ test('first-run setup requires the deployment secret and a strong password', asy
   assert.match(good.headers.get('set-cookie'), /SameSite=Strict/);
 });
 
-test('constant-time comparison helper rejects mismatched setup secrets', async () => {
-  const { constantTimeEqual } = await import('../worker.js');
+test('constant-time comparison helper rejects mismatched setup secrets', () => {
   assert.equal(constantTimeEqual('same-secret', 'same-secret'), true);
   assert.equal(constantTimeEqual('same-secret', 'different-secret'), false);
 });
