@@ -176,3 +176,43 @@ test('chat forwards exact client headers and the validated model override', asyn
     upstream.restore();
   }
 });
+
+test('first-run setup fails closed unless the deployment secret is configured', async () => {
+  const env = makeEnv();
+  const response = await worker.fetch(new Request('https://proxy.example.test/admin/api/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://proxy.example.test' },
+    body: JSON.stringify({ secret: 'attacker-secret', password: 'a-long-random-password' }),
+  }), env);
+  assert.equal(response.status, 503);
+  assert.equal(await env.GROK_KV.get('auth:password'), null);
+});
+
+test('first-run setup requires the deployment secret and a strong password', async () => {
+  const env = makeEnv();
+  env.ADMIN_SETUP_SECRET = 'z'.repeat(40);
+  const bad = await worker.fetch(new Request('https://proxy.example.test/admin/api/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://proxy.example.test' },
+    body: JSON.stringify({ secret: 'wrong-secret', password: 'a-long-random-password' }),
+  }), env);
+  assert.equal(bad.status, 403);
+  assert.equal(await env.GROK_KV.get('auth:password'), null);
+
+  const good = await worker.fetch(new Request('https://proxy.example.test/admin/api/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://proxy.example.test' },
+    body: JSON.stringify({ secret: env.ADMIN_SETUP_SECRET, password: 'a-long-random-password' }),
+  }), env);
+  assert.equal(good.status, 200);
+  assert.equal((await good.json()).ok, true);
+  assert.equal(await env.GROK_KV.get('auth:password'), 'a-long-random-password');
+  assert.match(good.headers.get('set-cookie'), /HttpOnly/);
+  assert.match(good.headers.get('set-cookie'), /SameSite=Strict/);
+});
+
+test('constant-time comparison helper rejects mismatched setup secrets', async () => {
+  const { constantTimeEqual } = await import('../worker.js');
+  assert.equal(constantTimeEqual('same-secret', 'same-secret'), true);
+  assert.equal(constantTimeEqual('same-secret', 'different-secret'), false);
+});
