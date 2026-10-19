@@ -355,16 +355,6 @@ function explicitFreeState(model) {
     return null;
 }
 
-function modeAvailability(mode) {
-    const a = mode && mode.availability;
-    if (!a || typeof a !== 'object') return 'unknown';
-    const blocked = ['requiresUpgrade', 'requires_upgrade', 'unavailable', 'comingSoon', 'coming_soon']
-        .some(key => Object.prototype.hasOwnProperty.call(a, key) && a[key] !== null && a[key] !== false);
-    if (blocked) return 'blocked';
-    if (Object.prototype.hasOwnProperty.call(a, 'available') && a.available !== null && a.available !== false) return 'available';
-    return 'unknown';
-}
-
 async function shortTokenFingerprint(token) {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(token || '')));
     return Array.from(new Uint8Array(digest).slice(0, 12), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -1036,7 +1026,9 @@ function adminPage() {
             'Source: ' + (r.source || 'upstream metadata not verified') +
             ' · Last sync: ' + updated +
             (r.stale ? ' · Showing cached catalogue' : '') +
-            ' · Accounts checked: ' + (r.account_count || 0);
+            ' · Accounts checked: ' + (r.account_count || 0) +
+            ' · Free-tier accounts: ' + (r.free_tier_account_count || 0) +
+            ' · Excluded non-Free accounts: ' + (r.excluded_account_count || 0);
         if (r.error) {
             error.textContent = r.error;
             error.classList.remove('hidden');
@@ -1046,7 +1038,7 @@ function adminPage() {
             list.innerHTML = '';
             const empty = document.createElement('div');
             empty.className = 'empty';
-            empty.textContent = 'No models can currently be verified as free/included. The panel will not guess from model names.';
+            empty.textContent = 'No verified free models are available. Free-tier accounts use the upstream tier-specific catalogue; non-Free accounts need explicit free/included model metadata.';
             list.appendChild(empty);
             return;
         }
@@ -1565,4 +1557,4 @@ export default {
     },
 };
 
-export { constantTimeEqual, explicitFreeState, modeAvailability, normalizeModelPayload, grokHeaders };
+export { constantTimeEqual, explicitFreeState, isApiModelSelectable, normalizeModelPayload, subscriptionTierStatus, grokHeaders };
