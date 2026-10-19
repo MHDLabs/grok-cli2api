@@ -123,7 +123,7 @@
 https://YOUR-WORKER.workers.dev/admin
 ```
 
-**راه‌اندازی اولیه:** در اولین ورود، پنل از شما می‌خواهد رمز مدیریتی جدیدی با حداقل ۱۲ نویسه تعیین کنید. هیچ رمز پیش‌فرضی وجود ندارد.
+**راه‌اندازی اولیه:** در اولین ورود، راز یک‌بارمصرف `ADMIN_SETUP_SECRET` را که در تنظیمات Cloudflare قرار داده‌اید وارد کنید و یک رمز مدیریتی حداقل ۱۲ نویسه‌ای بسازید. رمز پیش‌فرضی وجود ندارد. اگر نصب قبلی‌تان بدون ذخیرهٔ `auth:password` به رمز قدیمی `123456` متکی بود، قبل از به‌روزرسانی `ADMIN_SETUP_SECRET` را تنظیم کنید و پس از استقرار رمز جدید بسازید؛ نصب‌هایی که `auth:password` در KV دارند، با همان رمز موجود وارد می‌شوند.
 
 ---
 
@@ -556,7 +556,7 @@ Navigate to:
 https://YOUR-WORKER.workers.dev/admin
 ```
 
-**Initial setup:** On first visit, enter your one-time `ADMIN_SETUP_SECRET` from Cloudflare settings and create an admin password of at least 12 characters. The setup secret is not used for routine logins. There is no default password.
+**Initial setup:** On first visit, enter your one-time `ADMIN_SETUP_SECRET` from Cloudflare settings and create an admin password of at least 12 characters. The setup secret is not used for routine logins. There is no default password. Existing deployments that relied on the implicit `123456` password must configure `ADMIN_SETUP_SECRET` before upgrading and complete setup; deployments that already have `auth:password` stored in KV keep using that saved password.
 
 ---
 
