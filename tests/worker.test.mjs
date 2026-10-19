@@ -84,6 +84,7 @@ function makeEnv() {
 
 function mockUpstream({ tier = 'Free', models = [
   { id: 'free-model', capabilities: ['text'] },
+  { id: 'explicit-paid-model', is_free: false, capabilities: ['text'] },
   { id: 'hidden-model', hidden: true, capabilities: ['text'] },
   { id: 'unsupported-model', supportedInApi: false, capabilities: ['text'] },
 ] } = {}) {
@@ -173,6 +174,27 @@ test('paid account with no explicit free metadata does not advertise its paid ca
     assert.equal(response.status, 503);
     const payload = await response.json();
     assert.equal(payload.error.code, 'free_model_catalog_unavailable');
+  } finally {
+    upstream.restore();
+  }
+});
+
+test('public API routes reject unsupported HTTP methods', async () => {
+  const env = makeEnv();
+  const upstream = mockUpstream();
+  try {
+    const modelsResponse = await worker.fetch(new Request('https://proxy.example.test/v1/models', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer gk_test', 'Content-Type': 'application/json' },
+      body: '{}',
+    }), env);
+    assert.equal(modelsResponse.status, 405);
+    assert.equal((await modelsResponse.json()).error.code, 'method_not_allowed');
+
+    const chatResponse = await worker.fetch(apiRequest('/v1/chat/completions', undefined), env);
+    assert.equal(chatResponse.status, 405);
+    assert.equal((await chatResponse.json()).error.code, 'method_not_allowed');
+    assert.equal(upstream.calls.length, 0);
   } finally {
     upstream.restore();
   }
