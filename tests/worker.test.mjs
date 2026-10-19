@@ -3,16 +3,13 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import worker, {
   constantTimeEqual,
-  explicitFreeState,
-  isApiModelSelectable,
-  normalizeModelPayload,
-  subscriptionTierStatus,
   grokHeaders,
+  passthroughUpstreamResponse,
 } from '../worker.js';
 
 if (!globalThis.crypto) Object.defineProperty(globalThis, 'crypto', { value: webcrypto });
 
-test('Grok client identity headers use the requested exact values', () => {
+test('Grok client identity headers match the expected CLI identity', () => {
   const headers = grokHeaders('test-token');
   assert.equal(headers['User-Agent'], 'grok-shell/1.0.44 (linux; x86_64)');
   assert.equal(headers['x-grok-client-identifier'], 'grok-shell');
@@ -21,42 +18,22 @@ test('Grok client identity headers use the requested exact values', () => {
   assert.equal(headers.Authorization, 'Bearer test-token');
 });
 
-test('model payload normalization accepts known shapes and drops invalid/duplicate IDs', () => {
-  const models = normalizeModelPayload({
-    object: 'list',
-    data: [
-      { id: 'free-a', capabilities: ['text'] },
-      { id: 'free-a', capabilities: ['image'] },
-      { name: 'missing-id' },
-      { id: ' paid-b ' },
-    ],
+test('upstream response passthrough preserves status, body and relevant headers', async () => {
+  const upstream = new Response('{"error":{"code":"model_not_found"}}', {
+    status: 404,
+    headers: {
+      'Content-Type': 'application/json',
+      'Retry-After': '2',
+      'X-Request-Id': 'upstream-request-123',
+    },
   });
-  assert.deepEqual(models.map(model => model.id), ['free-a', 'paid-b']);
-  assert.equal(models[0].object, 'model');
-  assert.deepEqual(models[1].capabilities, []);
-});
-
-test('free eligibility fails closed when upstream metadata is missing', () => {
-  assert.equal(explicitFreeState({ id: 'free-a', is_free: true }), true);
-  assert.equal(explicitFreeState({ id: 'paid-a', is_free: false }), false);
-  assert.equal(explicitFreeState({ id: 'unknown-a' }), null);
-  assert.equal(explicitFreeState({ id: 'included-a', billingTier: 'included' }), true);
-  assert.equal(explicitFreeState({ id: 'paid-b', billingTier: 'premium' }), false);
-});
-
-test('free-tier detection uses the upstream subscription field, not model names', () => {
-  assert.deepEqual(subscriptionTierStatus({}), { isFreeTier: true, tier: 'Free', tierReported: false });
-  assert.deepEqual(subscriptionTierStatus({ subscriptionTier: 'Free' }), { isFreeTier: true, tier: 'Free', tierReported: true });
-  assert.equal(subscriptionTierStatus({ subscriptionTier: 'SuperGrok Pro' }).isFreeTier, false);
-  assert.equal(subscriptionTierStatus({ subscriptionTier: 5 }).isFreeTier, false);
-  assert.equal(explicitFreeState({ id: 'grok-4-something' }), null);
-});
-
-test('API model catalog omits explicitly hidden or API-unsupported entries', () => {
-  assert.equal(isApiModelSelectable({ id: 'shown-model' }), true);
-  assert.equal(isApiModelSelectable({ id: 'hidden-model', hidden: true }), false);
-  assert.equal(isApiModelSelectable({ id: 'not-for-api', supportedInApi: false }), false);
-  assert.equal(isApiModelSelectable({ id: 'meta-hidden', _meta: { hidden: true } }), false);
+  const response = passthroughUpstreamResponse(upstream);
+  assert.equal(response.status, 404);
+  assert.equal(await response.text(), '{"error":{"code":"model_not_found"}}');
+  assert.equal(response.headers.get('Content-Type'), 'application/json');
+  assert.equal(response.headers.get('Retry-After'), '2');
+  assert.equal(response.headers.get('X-Request-Id'), 'upstream-request-123');
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
 });
 
 function makeEnv() {
@@ -82,28 +59,27 @@ function makeEnv() {
   };
 }
 
-function mockUpstream({ tier = 'Free', models = [
-  { id: 'free-model', capabilities: ['text'] },
-  { id: 'explicit-paid-model', is_free: false, capabilities: ['text'] },
-  { id: 'hidden-model', hidden: true, capabilities: ['text'] },
-  { id: 'unsupported-model', supportedInApi: false, capabilities: ['text'] },
-] } = {}) {
+function mockUpstream({ modelsResponse, chatResponse } = {}) {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
-    if (url === 'https://cli-chat-proxy.grok.com/v1/user?include=subscription') {
-      return Response.json(tier === null ? { userId: 'test-user' } : { userId: 'test-user', subscriptionTier: tier });
-    }
     if (url === 'https://cli-chat-proxy.grok.com/v1/models') {
-      return Response.json({ object: 'list', data: models });
+      return modelsResponse || Response.json({
+        object: 'list',
+        data: [
+          { id: 'paid-looking-model', is_free: false },
+          { id: 'hidden-model', hidden: true },
+          { id: 'model-without-eligibility-metadata' },
+        ],
+      });
     }
     if (url === 'https://cli-chat-proxy.grok.com/v1/chat/completions') {
-      return Response.json({
+      return chatResponse || Response.json({
         id: 'chat-test',
         object: 'chat.completion',
-        choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: 'real upstream response' }, finish_reason: 'stop' }],
       });
     }
     throw new Error('Unexpected upstream URL: ' + url);
@@ -111,136 +87,133 @@ function mockUpstream({ tier = 'Free', models = [
   return { calls, restore: () => { globalThis.fetch = originalFetch; } };
 }
 
-function apiRequest(path, body) {
+function apiRequest(path, body, method) {
+  const requestMethod = method || (body === undefined ? 'GET' : 'POST');
   return new Request('https://proxy.example.test' + path, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: requestMethod,
     headers: {
       Authorization: 'Bearer gk_test',
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
   });
 }
 
-test('public models endpoint returns the Free account live catalog and omits unavailable entries', async () => {
+test('/v1/models returns the exact upstream model list without local free/hidden filtering', async () => {
   const env = makeEnv();
-  const upstream = mockUpstream();
-  try {
-    const response = await worker.fetch(apiRequest('/v1/models'), env);
-    assert.equal(response.status, 200);
-    const payload = await response.json();
-    assert.deepEqual(payload.data.map(model => model.id), ['free-model']);
-    const userCall = upstream.calls.find(call => call.url.endsWith('/v1/user?include=subscription'));
-    assert.ok(userCall);
-    assert.equal(userCall.init.headers['User-Agent'], 'grok-shell/1.0.44 (linux; x86_64)');
-    assert.equal(userCall.init.headers['x-grok-client-identifier'], 'grok-shell');
-    assert.equal(userCall.init.headers['x-grok-client-version'], '1.0.44');
-    assert.equal(userCall.init.headers['x-userid'], 'test-user');
-    assert.equal(userCall.init.headers['x-email'], 'test@example.invalid');
-    assert.ok(upstream.calls.some(call => call.url.endsWith('/v1/models')));
-  } finally {
-    upstream.restore();
-  }
-});
-
-test('paid accounts expose only models explicitly marked free/included', async () => {
-  const env = makeEnv();
-  const upstream = mockUpstream({
-    tier: 'SuperGrok Pro',
-    models: [
-      { id: 'paid-model', is_free: false, capabilities: ['text'] },
-      { id: 'explicit-free-model', is_free: true, capabilities: ['text'] },
-      { id: 'unknown-model', capabilities: ['text'] },
+  const upstreamBody = JSON.stringify({
+    object: 'list',
+    data: [
+      { id: 'paid-looking-model', is_free: false },
+      { id: 'hidden-model', hidden: true },
+      { id: 'model-without-eligibility-metadata' },
     ],
+    extra_upstream_field: { keep: true },
+  });
+  const upstream = mockUpstream({
+    modelsResponse: new Response(upstreamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'X-Request-Id': 'models-123' },
+    }),
   });
   try {
     const response = await worker.fetch(apiRequest('/v1/models'), env);
     assert.equal(response.status, 200);
-    const payload = await response.json();
-    assert.deepEqual(payload.data.map(model => model.id), ['explicit-free-model']);
+    assert.equal(await response.text(), upstreamBody);
+    assert.equal(response.headers.get('X-Request-Id'), 'models-123');
+
+    const call = upstream.calls.find(item => item.url.endsWith('/v1/models'));
+    assert.ok(call, 'the real upstream /v1/models endpoint must be called');
+    assert.equal(call.init.headers.Authorization, 'Bearer mock-access-token');
+    assert.equal(call.init.headers['x-userid'], 'test-user');
+    assert.equal(call.init.headers['x-email'], 'test@example.invalid');
   } finally {
     upstream.restore();
   }
 });
 
-test('paid account with no explicit free metadata does not advertise its paid catalogue', async () => {
+test('/v1/models preserves the actual upstream 404 instead of synthesizing a local response', async () => {
   const env = makeEnv();
+  const body = '{"error":{"code":"model_not_found","message":"upstream model catalog unavailable"}}';
   const upstream = mockUpstream({
-    tier: 'SuperGrok Pro',
-    models: [{ id: 'paid-only-model', capabilities: ['text'] }],
+    modelsResponse: new Response(body, { status: 404, headers: { 'Content-Type': 'application/json' } }),
   });
   try {
     const response = await worker.fetch(apiRequest('/v1/models'), env);
-    assert.equal(response.status, 503);
-    const payload = await response.json();
-    assert.equal(payload.error.code, 'free_model_catalog_unavailable');
+    assert.equal(response.status, 404);
+    assert.equal(await response.text(), body);
   } finally {
     upstream.restore();
   }
 });
 
-test('public API routes reject unsupported HTTP methods', async () => {
+test('chat request for an unknown model reaches Grok and returns its real model_not_found response', async () => {
+  const env = makeEnv();
+  const upstreamBody = '{"error":{"code":"model_not_found","message":"model not found at upstream"}}';
+  const upstream = mockUpstream({
+    chatResponse: new Response(upstreamBody, {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', 'X-Request-Id': 'chat-upstream-404' },
+    }),
+  });
+  try {
+    const requestBody = {
+      model: 'model-id-not-present-in-any-local-list',
+      messages: [{ role: 'user', content: 'test' }],
+      temperature: 0.2,
+    };
+    const response = await worker.fetch(apiRequest('/v1/chat/completions', requestBody), env);
+    assert.equal(response.status, 404);
+    assert.equal(await response.text(), upstreamBody);
+    assert.equal(response.headers.get('X-Request-Id'), 'chat-upstream-404');
+
+    const call = upstream.calls.find(item => item.url.endsWith('/v1/chat/completions'));
+    assert.ok(call, 'the chat request must reach Grok even when the model is not in a local catalog');
+    assert.equal(call.init.headers['x-grok-model-override'], requestBody.model);
+    assert.equal(call.init.headers.Authorization, 'Bearer mock-access-token');
+    assert.equal(call.init.headers['x-userid'], 'test-user');
+    assert.equal(call.init.headers['x-email'], 'test@example.invalid');
+    assert.equal(call.init.body, JSON.stringify(requestBody));
+  } finally {
+    upstream.restore();
+  }
+});
+
+test('successful chat returns the real upstream response and increments API-key usage', async () => {
+  const env = makeEnv();
+  const upstreamBody = '{"id":"real-upstream-result","choices":[{"message":{"role":"assistant","content":"hello from Grok"}}]}';
+  const upstream = mockUpstream({
+    chatResponse: new Response(upstreamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  });
+  try {
+    const response = await worker.fetch(apiRequest('/v1/chat/completions', {
+      model: 'whatever-the-upstream-accepts',
+      messages: [{ role: 'user', content: 'hello' }],
+    }), env);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), upstreamBody);
+    const keys = JSON.parse(await env.GROK_KV.get('apikeys:list'));
+    assert.equal(keys[0].usage, 1);
+  } finally {
+    upstream.restore();
+  }
+});
+
+test('public API rejects unsupported HTTP methods without contacting Grok', async () => {
   const env = makeEnv();
   const upstream = mockUpstream();
   try {
-    const modelsResponse = await worker.fetch(new Request('https://proxy.example.test/v1/models', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer gk_test', 'Content-Type': 'application/json' },
-      body: '{}',
-    }), env);
+    const modelsResponse = await worker.fetch(apiRequest('/v1/models', '{}', 'POST'), env);
     assert.equal(modelsResponse.status, 405);
     assert.equal((await modelsResponse.json()).error.code, 'method_not_allowed');
 
-    const chatResponse = await worker.fetch(apiRequest('/v1/chat/completions', undefined), env);
+    const chatResponse = await worker.fetch(apiRequest('/v1/chat/completions', undefined, 'GET'), env);
     assert.equal(chatResponse.status, 405);
     assert.equal((await chatResponse.json()).error.code, 'method_not_allowed');
     assert.equal(upstream.calls.length, 0);
-  } finally {
-    upstream.restore();
-  }
-});
-
-test('chat rejects paid/unknown models even when they appear in upstream model lists', async () => {
-  const env = makeEnv();
-  const upstream = mockUpstream();
-  try {
-    // Warm the live model cache with mocked upstream metadata.
-    const listed = await worker.fetch(apiRequest('/v1/models'), env);
-    assert.equal(listed.status, 200);
-
-    const response = await worker.fetch(apiRequest('/v1/chat/completions', {
-      model: 'paid-model',
-      messages: [{ role: 'user', content: 'hello' }],
-    }), env);
-    assert.equal(response.status, 400);
-    const payload = await response.json();
-    assert.equal(payload.error.code, 'model_not_allowed');
-    assert.equal(upstream.calls.some(call => call.url.endsWith('/v1/chat/completions')), false);
-  } finally {
-    upstream.restore();
-  }
-});
-
-test('chat forwards exact client headers and the validated model override', async () => {
-  const env = makeEnv();
-  const upstream = mockUpstream();
-  try {
-    const listed = await worker.fetch(apiRequest('/v1/models'), env);
-    assert.equal(listed.status, 200);
-
-    const response = await worker.fetch(apiRequest('/v1/chat/completions', {
-      model: 'free-model',
-      messages: [{ role: 'user', content: 'hello' }],
-    }), env);
-    assert.equal(response.status, 200);
-    const chatCall = upstream.calls.find(call => call.url.endsWith('/v1/chat/completions'));
-    assert.ok(chatCall);
-    assert.equal(chatCall.init.headers['User-Agent'], 'grok-shell/1.0.44 (linux; x86_64)');
-    assert.equal(chatCall.init.headers['x-grok-client-identifier'], 'grok-shell');
-    assert.equal(chatCall.init.headers['x-grok-client-version'], '1.0.44');
-    assert.equal(chatCall.init.headers['x-grok-model-override'], 'free-model');
-    assert.equal(chatCall.init.headers['x-userid'], 'test-user');
-    assert.equal(chatCall.init.headers['x-email'], 'test@example.invalid');
   } finally {
     upstream.restore();
   }

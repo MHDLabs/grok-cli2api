@@ -27,8 +27,6 @@ const GROK_CLIENT_IDENTIFIER = 'grok-shell';
 const GROK_USER_AGENT = 'grok-shell/1.0.44 (linux; x86_64)';
 
 // ---------- Dynamic model discovery ----------
-const MODEL_CACHE_TTL = 5 * 60 * 1000;
-const MODEL_STALE_TTL = 60 * 60 * 1000;
 const UPSTREAM_TIMEOUT_MS = 10000;
 
 // ============================================================
@@ -154,12 +152,18 @@ async function validateApiKey(env, authHeader) {
 // ============================================================
 async function pickAccount(env) {
     const accounts = await kvGet(env, 'accounts:list', []);
-    const active = accounts.filter(a => a.active);
+    const active = accounts.filter(account => account && account.active && account.access_token)
+        .sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
     if (!active.length) return null;
-    active.sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
     const chosen = active[0];
-    chosen.lastUsed = Date.now();
-    await kvPut(env, 'accounts:list', accounts);
+    const index = accounts.findIndex(account =>
+        account.access_token === chosen.access_token ||
+        (account.email === chosen.email && account.createdAt === chosen.createdAt));
+    if (index >= 0) {
+        accounts[index] = { ...accounts[index], lastUsed: Date.now() };
+        await kvPut(env, 'accounts:list', accounts);
+        return accounts[index];
+    }
     return chosen;
 }
 
@@ -279,82 +283,6 @@ function accountUserId(account) {
     return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
 }
 
-function normalizeModelPayload(payload) {
-    const raw = Array.isArray(payload) ? payload :
-        (Array.isArray(payload && payload.data) ? payload.data :
-        (Array.isArray(payload && payload.models) ? payload.models : []));
-    const seen = new Set();
-    return raw.filter(model => model && [model.id, model.model, model.modelId]
-        .some(value => typeof value === 'string' && value.trim()))
-        .map(model => ({
-            ...model,
-            id: String(model.id || model.model || model.modelId).trim(),
-            object: model.object || 'model',
-            owned_by: model.owned_by || model.ownedBy || 'xai',
-            capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
-        }))
-        .filter(model => {
-            if (!model.id || seen.has(model.id)) return false;
-            seen.add(model.id);
-            return true;
-        });
-}
-
-function isApiModelSelectable(model) {
-    const meta = model && model._meta && typeof model._meta === 'object' ? model._meta : {};
-    const hidden = model.hidden === true || meta.hidden === true;
-    const supported = model.supportedInApi ?? model.supported_in_api ??
-        meta.supportedInApi ?? meta.supported_in_api;
-    return !hidden && supported !== false;
-}
-
-function subscriptionTierStatus(profile) {
-    const tier = profile && (profile.subscriptionTier ?? profile.subscription_tier);
-    // The upstream omits subscriptionTier for a personal Free account.
-    if (tier === undefined || tier === null || (typeof tier === 'string' && !tier.trim())) {
-        return { isFreeTier: true, tier: 'Free', tierReported: false };
-    }
-    if (typeof tier !== 'string') {
-        return { isFreeTier: false, tier: 'unknown', tierReported: true };
-    }
-    const normalized = tier.trim();
-    return { isFreeTier: normalized.toLowerCase() === 'free', tier: normalized, tierReported: true };
-}
-
-function explicitFreeState(model) {
-    const flags = [
-        'is_free', 'isFree', 'free', 'free_tier', 'freeTier',
-        'included', 'is_included', 'included_in_plan', 'includedInPlan',
-    ];
-    for (const key of flags) {
-        if (typeof model[key] === 'boolean') return model[key];
-    }
-    const fields = [
-        model.billing_tier, model.billingTier, model.pricing_tier,
-        model.pricingTier, model.access_tier, model.accessTier, model.plan,
-        model.tier, model.billing, model.pricing_type, model.pricingType,
-    ];
-    const label = fields.filter(v => typeof v === 'string').join(' ').toLowerCase();
-    if (/\b(free|included|complimentary)\b/.test(label)) return true;
-    if (/\b(paid|premium|pro|upgrade|required subscription)\b/.test(label)) return false;
-    const pricing = model.pricing || model.price;
-    if (pricing && typeof pricing === 'object') {
-        const amounts = [];
-        for (const key of ['input', 'output', 'prompt', 'completion', 'input_price', 'output_price']) {
-            const value = pricing[key];
-            if (typeof value === 'number') amounts.push(value);
-            else if (value && typeof value === 'object') {
-                for (const nested of ['price', 'amount', 'per_token', 'per_1m_tokens']) {
-                    if (typeof value[nested] === 'number') amounts.push(value[nested]);
-                }
-            }
-        }
-        if (amounts.length && amounts.every(value => value === 0)) return true;
-        if (amounts.some(value => value > 0)) return false;
-    }
-    return null;
-}
-
 async function shortTokenFingerprint(token) {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(token || '')));
     return Array.from(new Uint8Array(digest).slice(0, 12), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -432,162 +360,18 @@ async function fetchAccountRequest(env, account, url, init = {}) {
     return { response, account: currentAccount };
 }
 
-async function fetchFreeModelsForAccount(env, account, force = false) {
-    let cacheKey = 'models:free:' + await shortTokenFingerprint(account.access_token);
-    const cached = await kvGet(env, cacheKey);
-    if (!force && cached && cached.verified === true &&
-        Date.now() - Number(cached.fetchedAt || 0) < MODEL_CACHE_TTL) {
-        return { ...cached, fromCache: true };
+function passthroughUpstreamResponse(upstreamResponse) {
+    const headers = new Headers();
+    for (const name of ['content-type', 'cache-control', 'retry-after', 'etag', 'x-request-id', 'request-id']) {
+        const value = upstreamResponse.headers.get(name);
+        if (value) headers.set(name, value);
     }
-
-    let freeTierConfirmed = false;
-    try {
-        const userId = accountUserId(account);
-        const userResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/user?include=subscription', {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                ...(userId ? { 'x-userid': userId } : {}),
-                ...(account.email ? { 'x-email': String(account.email) } : {}),
-            },
-        });
-        account = userResult.account;
-        cacheKey = 'models:free:' + await shortTokenFingerprint(account.access_token);
-        if (!userResult.response.ok) {
-            throw new Error('Upstream subscription endpoint returned HTTP ' + userResult.response.status);
-        }
-        const profile = await userResult.response.json();
-        const tier = subscriptionTierStatus(profile);
-        freeTierConfirmed = tier.isFreeTier;
-
-        const modelResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/models', {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                ...(userId ? { 'x-userid': userId } : {}),
-                ...(account.email ? { 'x-email': String(account.email) } : {}),
-            },
-        });
-        account = modelResult.account;
-        if (!modelResult.response.ok) {
-            throw new Error('Upstream model endpoint returned HTTP ' + modelResult.response.status);
-        }
-
-        const upstreamModels = normalizeModelPayload(await modelResult.response.json())
-            .filter(isApiModelSelectable);
-        if (!upstreamModels.length) {
-            throw new Error('The upstream returned no API-supported models.');
-        }
-
-        // On a Free account, the official /v1/models endpoint is tier-aware and returns the catalog
-        // available to that tier. For non-Free accounts, expose only models that explicitly
-        // self-identify as free/included; never infer their price from names or model families.
-        const models = upstreamModels.filter(model => {
-            const freeState = explicitFreeState(model);
-            if (freeState === false) return false;
-            return tier.isFreeTier || freeState === true;
-        });
-
-        const entry = {
-            models,
-            fetchedAt: Date.now(),
-            source: tier.isFreeTier
-                ? 'cli-chat-proxy /v1/user?include=subscription + tier-specific /v1/models'
-                : 'cli-chat-proxy /v1/user?include=subscription + explicit free metadata from /v1/models',
-            verified: true,
-            isFreeTier: tier.isFreeTier,
-            accountTier: tier.tier,
-            tierReported: tier.tierReported,
-            error: models.length ? null : (tier.isFreeTier
-                ? 'The upstream returned no API-supported models for this Free account.'
-                : 'This account is not on the Free tier and the model catalogue has no explicit free/included metadata.'),
-        };
-        await kvPut(env, cacheKey, entry);
-        return { ...entry, fromCache: false };
-    } catch (error) {
-        // Stale model data may be reused only after this request confirms the account is still Free.
-        if (freeTierConfirmed && cached && cached.isFreeTier === true &&
-            Array.isArray(cached.models) && Date.now() - Number(cached.fetchedAt || 0) < MODEL_STALE_TTL) {
-            return {
-                ...cached,
-                fromCache: true,
-                stale: true,
-                error: 'Live model refresh failed; serving the last verified Free-tier catalogue temporarily.',
-            };
-        }
-        return {
-            models: [],
-            fetchedAt: null,
-            source: null,
-            verified: false,
-            isFreeTier: freeTierConfirmed,
-            accountTier: null,
-            tierReported: false,
-            fromCache: false,
-            error: String(error && error.message || 'Unable to verify account tier and model catalogue'),
-        };
-    }
-}
-
-async function getFreeModelCatalog(env, force = false) {
-    const accounts = await kvGet(env, 'accounts:list', []);
-    const active = accounts.filter(account => account && account.active && account.access_token);
-    if (!active.length) {
-        return { models: [], fetchedAt: null, source: null, verified: false, error: 'No active Grok account configured.' };
-    }
-    const results = await Promise.all(active.map(account =>
-        fetchFreeModelsForAccount(env, account, force).catch(error => ({
-            models: [], fetchedAt: null, verified: false, source: null,
-            error: String(error && error.message || 'Model discovery failed'),
-        }))
-    ));
-    const byId = new Map();
-    for (const result of results) {
-        for (const model of result.models || []) {
-            if (!byId.has(model.id)) byId.set(model.id, model);
-        }
-    }
-    const models = Array.from(byId.values());
-    const timestamps = results.map(result => result.fetchedAt || 0).filter(Boolean);
-    const errors = results.map(result => result.error).filter(Boolean);
-    const freeTierAccounts = results.filter(result => result.isFreeTier === true).length;
-    const nonFreeAccounts = results.filter(result => result.isFreeTier === false).length;
-    const excludedAccounts = results.filter(result => !Array.isArray(result.models) || result.models.length === 0).length;
-    return {
-        models,
-        fetchedAt: timestamps.length ? Math.max(...timestamps) : null,
-        source: results.find(result => Array.isArray(result.models) && result.models.length && result.source)?.source ||
-            results.find(result => result.source)?.source || null,
-        verified: results.some(result => result.verified === true),
-        stale: results.some(result => result.stale),
-        fromCache: results.every(result => result.fromCache),
-        error: models.length ? null : (errors[0] || 'No verified free models are available. Configure a Free-tier account or an explicit upstream free-model marker.'),
-        accountCount: active.length,
-        freeTierAccountCount: freeTierAccounts,
-        nonFreeAccountCount: nonFreeAccounts,
-        excludedAccountCount: excludedAccounts,
-    };
-}
-
-async function pickAccountForModel(env, modelId) {
-    const accounts = await kvGet(env, 'accounts:list', []);
-    const active = accounts.filter(account => account && account.active && account.access_token)
-        .sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
-    for (const account of active) {
-        const catalog = await fetchFreeModelsForAccount(env, account, false);
-        if (!(catalog.models || []).some(model => model.id === modelId)) continue;
-        const current = await kvGet(env, 'accounts:list', []);
-        const index = current.findIndex(item =>
-            item.access_token === account.access_token ||
-            (item.email === account.email && item.createdAt === account.createdAt));
-        if (index >= 0) {
-            current[index].lastUsed = Date.now();
-            await kvPut(env, 'accounts:list', current);
-            return current[index];
-        }
-        return account;
-    }
-    return null;
+    headers.set('Access-Control-Allow-Origin', '*');
+    if (!headers.has('Cache-Control')) headers.set('Cache-Control', 'no-cache');
+    return new Response(upstreamResponse.body, {
+        status: upstreamResponse.status,
+        headers,
+    });
 }
 
 // ============================================================
@@ -1337,27 +1121,51 @@ export default {
 
             // --- Live Models ---
             if ((path === '/admin/api/models' && request.method === 'GET') || (path === '/admin/api/models/refresh' && request.method === 'POST')) {
-                const catalog = await getFreeModelCatalog(env, request.method === 'POST');
-                return json({
-                    models: (catalog.models || []).map(model => ({
-                        id: model.id,
-                        name: typeof model.name === 'string' ? model.name : model.id,
-                        description: typeof model.description === 'string' ? model.description : null,
-                        capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
-                        created: Number.isFinite(model.created) ? model.created : null,
-                        owned_by: typeof model.owned_by === 'string' ? model.owned_by : 'xai',
-                    })),
-                    count: (catalog.models || []).length,
-                    fetched_at: catalog.fetchedAt || null,
-                    source: catalog.source || null,
-                    verified: !!catalog.verified,
-                    stale: !!catalog.stale,
-                    error: catalog.error || null,
-                    account_count: catalog.accountCount || 0,
-                    free_tier_account_count: catalog.freeTierAccountCount || 0,
-                    non_free_account_count: catalog.nonFreeAccountCount || 0,
-                    excluded_account_count: catalog.excludedAccountCount || 0,
-                });
+                const account = await pickAccount(env);
+                if (!account) {
+                    return json({
+                        models: [], count: 0, fetched_at: null,
+                        source: GROK_UPSTREAM + '/v1/models', verified: false,
+                        error: 'No active Grok account configured.',
+                    }, 503);
+                }
+                try {
+                    const result = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/models', {
+                        method: 'GET', headers: { 'Accept': 'application/json' },
+                    });
+                    const upstreamResponse = result.response;
+                    const raw = await upstreamResponse.text();
+                    let payload = null;
+                    try { payload = JSON.parse(raw); } catch { /* Keep non-JSON upstream bodies out of rendered HTML. */ }
+                    const models = Array.isArray(payload && payload.data) ? payload.data : [];
+                    return json({
+                        models: models.map(model => ({
+                            id: typeof model.id === 'string' ? model.id : String(model.id || model.model || model.modelId || ''),
+                            name: typeof model.name === 'string' ? model.name : String(model.id || model.model || model.modelId || 'Unknown model'),
+                            description: typeof model.description === 'string' ? model.description : null,
+                            capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
+                            created: Number.isFinite(model.created) ? model.created : null,
+                            owned_by: typeof model.owned_by === 'string' ? model.owned_by : 'upstream',
+                        })),
+                        count: models.length,
+                        fetched_at: Date.now(),
+                        source: GROK_UPSTREAM + '/v1/models',
+                        verified: upstreamResponse.ok,
+                        stale: false,
+                        error: upstreamResponse.ok ? null : (payload && payload.error && payload.error.message) || ('Upstream returned HTTP ' + upstreamResponse.status),
+                        upstream_status: upstreamResponse.status,
+                        account_count: 1,
+                        free_tier_account_count: null,
+                        non_free_account_count: null,
+                        excluded_account_count: 0,
+                    }, upstreamResponse.ok ? 200 : 502);
+                } catch (error) {
+                    return json({
+                        models: [], count: 0, fetched_at: null,
+                        source: GROK_UPSTREAM + '/v1/models', verified: false,
+                        error: 'Could not reach the upstream model endpoint: ' + String(error && error.message || error),
+                    }, 502);
+                }
             }
 
             // --- Accounts ---
@@ -1471,37 +1279,43 @@ export default {
                 }, 401);
             }
 
-            // ---------- Live, verified free-model endpoint ----------
+            // ---------- Direct upstream model endpoint ----------
             if (path === '/v1/models') {
-                const catalog = await getFreeModelCatalog(env);
-                if (!catalog.models.length) {
+                const account = await pickAccount(env);
+                if (!account) {
                     return json({
                         error: {
-                            message: 'Could not verify free model availability from the upstream service. ' + (catalog.error || ''),
+                            message: 'No active Grok account is configured.',
                             type: 'server_error',
-                            code: 'free_model_catalog_unavailable',
+                            code: 'no_active_account',
                         },
                     }, 503);
                 }
-                const capFilter = url.searchParams.get('capability');
-                let models = catalog.models;
-                if (capFilter) models = models.filter(model => (model.capabilities || []).includes(capFilter));
-                return json({
-                    object: 'list',
-                    data: models.map(model => ({
-                        id: model.id,
-                        object: 'model',
-                        created: Number.isFinite(model.created) ? model.created : undefined,
-                        owned_by: model.owned_by || 'xai',
-                        ...(Array.isArray(model.capabilities) && model.capabilities.length ? { capabilities: model.capabilities } : {}),
-                    })),
-                });
+                try {
+                    const upstreamResult = await fetchAccountRequest(
+                        env,
+                        account,
+                        GROK_UPSTREAM + url.pathname + url.search,
+                        { method: 'GET', headers: { 'Accept': request.headers.get('Accept') || 'application/json' } },
+                    );
+                    return passthroughUpstreamResponse(upstreamResult.response);
+                } catch (error) {
+                    return json({
+                        error: {
+                            message: 'Could not reach the upstream /v1/models endpoint.',
+                            type: 'server_error',
+                            code: 'upstream_request_failed',
+                        },
+                    }, 502);
+                }
             }
 
             // ---------- Chat completions ----------
+            let rawBody;
             let body;
             try {
-                body = await request.json();
+                rawBody = await request.text();
+                body = JSON.parse(rawBody);
             } catch (e) {
                 return json({ error: { message: 'Invalid JSON body: ' + e.message, type: 'invalid_request_error' } }, 400);
             }
@@ -1512,47 +1326,40 @@ export default {
                 return json({ error: { message: 'messages must be an array.', type: 'invalid_request_error', code: 'invalid_messages' } }, 400);
             }
 
-            const account = await pickAccountForModel(env, body.model);
+            // No local catalog or subscription filter: let Grok handle the requested model.
+            const account = await pickAccount(env);
             if (!account) {
-                const catalog = await getFreeModelCatalog(env);
-                if (!catalog.models.length) {
-                    return json({
-                        error: {
-                            message: 'Could not verify free model eligibility. ' + (catalog.error || ''),
-                            type: 'server_error',
-                            code: 'free_model_catalog_unavailable',
-                        },
-                    }, 503);
-                }
                 return json({
                     error: {
-                        message: 'The requested model is unavailable or is not verified as free/included for the configured Grok accounts.',
-                        type: 'invalid_request_error',
-                        code: 'model_not_allowed',
+                        message: 'No active Grok account is configured.',
+                        type: 'server_error',
+                        code: 'no_active_account',
                     },
-                }, 400);
+                }, 503);
             }
 
             let upstreamResult;
             try {
-                upstreamResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/chat/completions', {
+                upstreamResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + url.pathname + url.search, {
                     method: 'POST',
                     headers: {
                         'x-grok-model-override': body.model,
                         'x-grok-session-id': randomHex(16),
                         'x-grok-conv-id': randomHex(16),
                     },
-                    body: JSON.stringify(body),
+                    body: rawBody,
                 });
             } catch (error) {
                 return json({
                     error: {
-                        message: 'The Grok upstream request failed or timed out.',
+                        message: 'Could not reach the upstream Grok endpoint.',
                         type: 'server_error',
                         code: 'upstream_request_failed',
                     },
                 }, 502);
             }
+
+            // Usage counts the real upstream attempt, including upstream errors.
             const upstreamRes = upstreamResult.response;
 
             // Increment usage counter
@@ -1564,15 +1371,8 @@ export default {
                 await kvPut(env, 'apikeys:list', keys);
             }
 
-            // Stream passthrough
-            return new Response(upstreamRes.body, {
-                status: upstreamRes.status,
-                headers: {
-                    'Content-Type': upstreamRes.headers.get('Content-Type') || 'application/json',
-                                'Access-Control-Allow-Origin': '*',
-                                'Cache-Control': 'no-cache',
-                },
-            });
+            // Preserve the upstream status and body, including its model_not_found response.
+            return passthroughUpstreamResponse(upstreamRes);
         }
 
         // ================= ROOT =================
@@ -1584,4 +1384,4 @@ export default {
     },
 };
 
-export { constantTimeEqual, explicitFreeState, isApiModelSelectable, normalizeModelPayload, subscriptionTierStatus, grokHeaders };
+export { constantTimeEqual, grokHeaders, passthroughUpstreamResponse };
