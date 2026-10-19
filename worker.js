@@ -34,6 +34,16 @@ const UPSTREAM_TIMEOUT_MS = 10000;
 // ============================================================
 //  Utilities
 // ============================================================
+function constantTimeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    let diff = a.length ^ b.length;
+    const length = Math.max(a.length, b.length);
+    for (let i = 0; i < length; i++) {
+        diff |= (a.charCodeAt(i % (a.length || 1)) || 0) ^ (b.charCodeAt(i % (b.length || 1)) || 0);
+    }
+    return diff === 0;
+}
+
 function randomHex(len = 32) {
     const arr = new Uint8Array(len);
     crypto.getRandomValues(arr);
@@ -713,6 +723,7 @@ function adminPage() {
     <div class="logo-icon" style="margin:0 auto 16px;width:48px;height:48px;font-size:22px;">&#128274;</div>
     <h1>Secure your panel</h1>
     <p>Create the first admin password. Use at least 12 characters.</p>
+    <input type="password" id="setupSecret" autocomplete="off" placeholder="One-time setup secret" style="margin-bottom:10px;">
     <input type="password" id="setupPass" autocomplete="new-password" placeholder="New admin password (12+ chars)">
     <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="doSetup()">Set password</button>
     <div id="setupError" class="error hidden"></div>
@@ -870,11 +881,12 @@ function adminPage() {
 
     async function doSetup() {
         const password = document.getElementById('setupPass').value;
+        const secret = document.getElementById('setupSecret').value;
         const err = document.getElementById('setupError');
         err.classList.add('hidden');
         const r = await api('/admin/api/setup', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password }),
+            body: JSON.stringify({ password, secret }),
         });
         if (r.ok) { showDash(); loadAll(); }
         else { err.textContent = r.message || r.error || 'Could not set password'; err.classList.remove('hidden'); }
@@ -1240,6 +1252,16 @@ export default {
             if (configuredPassword) return json({ ok: false, error: 'already_configured' }, 409);
             let payload;
             try { payload = await request.json(); } catch { return json({ ok: false, error: 'invalid_json' }, 400); }
+            const requiredSecret = typeof env.ADMIN_SETUP_SECRET === 'string' ? env.ADMIN_SETUP_SECRET : '';
+            if (requiredSecret.length < 32) {
+                return json({ ok: false, error: 'setup_secret_not_configured', message: 'Set the ADMIN_SETUP_SECRET Worker secret to at least 32 characters before initial setup.' }, 503);
+            }
+            const providedSecret = typeof payload.secret === 'string' ? payload.secret : '';
+            if (!constantTimeEqual(providedSecret, requiredSecret)) {
+                return json({ ok: false, error: 'invalid_setup_secret', message: 'The one-time setup secret is incorrect.' }, 403);
+            }
+            const origin = request.headers.get('Origin');
+            if (origin && origin !== url.origin) return json({ ok: false, error: 'invalid_origin' }, 403);
             const password = typeof payload.password === 'string' ? payload.password : '';
             if (password.length < 12) {
                 return json({ ok: false, error: 'weak_password', message: 'Use a password of at least 12 characters.' }, 400);
@@ -1500,3 +1522,5 @@ export default {
         return json({ error: 'not found', path }, 404);
     },
 };
+
+export { constantTimeEqual, explicitFreeState, modeAvailability, normalizeModelPayload, grokHeaders };
