@@ -252,9 +252,9 @@ b1a00492-073a-47ea-816f-4c329264a828
 
 ## 📋 لیست مدل‌ها
 
-لیست مدل‌ها از سرویس اصلی به‌صورت پویا دریافت و برای مدت کوتاه cache می‌شود. endpoint عمومی `/v1/models` فقط مدل‌هایی را برمی‌گرداند که رایگان/شامل پلن بودنشان از فرادادهٔ صریح upstream قابل تأیید باشد. مدل‌های ناشناخته، پولی یا نیازمند ارتقا نمایش داده نمی‌شوند و endpoint چت نیز همین محدودیت را اعمال می‌کند.
+لیست مدل‌ها هر ۵ دقیقه از سرویس اصلی دریافت و cache می‌شود. پیش از دریافت فهرست، پروژه وضعیت اشتراک حساب را از `/v1/user?include=subscription` می‌خواند. برای حساب Free، فهرست خود `/v1/models` به‌عنوان کاتالوگ همان سطح دسترسی استفاده می‌شود؛ مدل‌های مخفی یا پشتیبانی‌نشده برای API حذف می‌شوند. برای حساب‌های غیر Free، فقط مدل‌هایی نمایش داده می‌شوند که خود upstream صراحتاً رایگان/شامل پلن علامت‌گذاری کرده باشد. مدل‌های پولی یا نامشخص از روی اسم‌شان حدس زده نمی‌شوند و endpoint چت نیز همین فهرست را اجباری می‌کند.
 
-اگر سرویس اصلی شناسهٔ مدل‌ها را ارائه کند اما فرادادهٔ قیمت یا وضعیت رایگان را ندهد، پروژه از روی نام مدل حدس نمی‌زند و تا زمان قابل‌تأیید شدن شرایط، خطای مناسب برمی‌گرداند. در پنل ادمین، تب **Models** وضعیت به‌روزرسانی و تعداد مدل‌های تأییدشده را نشان می‌دهد.
+اگر حساب غیر Free باشد و سرویس اصلی برای مدل‌ها اطلاعات صریح رایگان‌بودن ندهد، پروژه به‌جای نمایش احتمالی مدل‌های پولی، خطای مناسب برمی‌گرداند. در پنل ادمین، تب **Models** وضعیت همگام‌سازی، تعداد مدل‌های تأییدشده و تعداد حساب‌های Free/حذف‌شده را نشان می‌دهد.
 
 ## 🧪 مثال‌های استفاده
 
@@ -685,9 +685,9 @@ The proxy sends all requests to xAI with the following headers:
 
 ## 📋 Model List
 
-The model catalogue is fetched dynamically from the upstream service and cached briefly. The public `/v1/models` endpoint returns only models whose free/included eligibility can be verified from explicit upstream metadata. Unknown, paid, and upgrade-required models are not advertised, and the chat endpoint enforces the same allow-list.
+The model catalogue is fetched from the upstream every five minutes and cached briefly. Before listing models, the proxy checks the account tier through `/v1/user?include=subscription`. For a Free account, the upstream `/v1/models` response is treated as the tier-specific catalogue; entries marked hidden or unsupported by the API are removed. For non-Free accounts, only models explicitly marked free/included by upstream metadata are exposed. Paid or unknown models are never guessed from their names, and the chat endpoint enforces the same allow-list.
 
-If the upstream exposes model IDs without explicit pricing or free/included metadata, the proxy will not guess based on model names and will return a clear error until eligibility can be verified. The admin panel's **Models** tab shows sync status and the count of verified models.
+If a non-Free account's model response has no explicit free/included metadata, the proxy returns a clear error instead of risking advertising paid models. The admin panel's **Models** tab shows sync status, verified model count, and the number of Free vs. excluded accounts.
 
 ## 🧪 Usage Examples
 
