@@ -545,17 +545,21 @@ async function getFreeModelCatalog(env, force = false) {
     const timestamps = results.map(result => result.fetchedAt || 0).filter(Boolean);
     const errors = results.map(result => result.error).filter(Boolean);
     const freeTierAccounts = results.filter(result => result.isFreeTier === true).length;
+    const nonFreeAccounts = results.filter(result => result.isFreeTier === false).length;
+    const excludedAccounts = results.filter(result => !Array.isArray(result.models) || result.models.length === 0).length;
     return {
         models,
         fetchedAt: timestamps.length ? Math.max(...timestamps) : null,
-        source: results.find(result => result.source)?.source || null,
+        source: results.find(result => Array.isArray(result.models) && result.models.length && result.source)?.source ||
+            results.find(result => result.source)?.source || null,
         verified: results.some(result => result.verified === true),
         stale: results.some(result => result.stale),
         fromCache: results.every(result => result.fromCache),
         error: models.length ? null : (errors[0] || 'No verified free models are available. Configure a Free-tier account or an explicit upstream free-model marker.'),
         accountCount: active.length,
         freeTierAccountCount: freeTierAccounts,
-        excludedAccountCount: active.length - freeTierAccounts,
+        nonFreeAccountCount: nonFreeAccounts,
+        excludedAccountCount: excludedAccounts,
     };
 }
 
@@ -1028,7 +1032,8 @@ function adminPage() {
             (r.stale ? ' · Showing cached catalogue' : '') +
             ' · Accounts checked: ' + (r.account_count || 0) +
             ' · Free-tier accounts: ' + (r.free_tier_account_count || 0) +
-            ' · Excluded non-Free accounts: ' + (r.excluded_account_count || 0);
+            ' · Non-Free accounts: ' + (r.non_free_account_count || 0) +
+            ' · Accounts without verified free models: ' + (r.excluded_account_count || 0);
         if (r.error) {
             error.textContent = r.error;
             error.classList.remove('hidden');
@@ -1215,6 +1220,12 @@ export default {
         const url = new URL(request.url);
         const path = url.pathname;
 
+        // Prevent cross-origin cookie-authenticated mutations to the admin API.
+        if (path.startsWith('/admin/api/') && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+            const origin = request.headers.get('Origin');
+            if (origin && origin !== url.origin) return json({ error: 'invalid_origin' }, 403);
+        }
+
         // ---------- CORS preflight ----------
         if (request.method === 'OPTIONS') {
             return new Response(null, {
@@ -1338,6 +1349,7 @@ export default {
                     error: catalog.error || null,
                     account_count: catalog.accountCount || 0,
                     free_tier_account_count: catalog.freeTierAccountCount || 0,
+                    non_free_account_count: catalog.nonFreeAccountCount || 0,
                     excluded_account_count: catalog.excludedAccountCount || 0,
                 });
             }
@@ -1369,7 +1381,9 @@ export default {
             }
 
             if (path === '/admin/api/keys' && request.method === 'POST') {
-                const { label } = await request.json();
+                let payload;
+                try { payload = await request.json(); } catch { return json({ error: 'invalid_json' }, 400); }
+                const label = typeof payload.label === 'string' ? payload.label.trim().slice(0, 80) || 'default' : 'default';
                 const key = await generateApiKey(env, label);
                 return json({ key });
             }
