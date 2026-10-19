@@ -122,9 +122,7 @@
 https://YOUR-WORKER.workers.dev/admin
 ```
 
-**پسورد پیش‌فرض:** `123456`
-
-> ⚠️ **مهم:** بلافاصله بعد از ورود، از تب **تنظیمات** پسورد را تغییر دهید!
+**راه‌اندازی اولیه:** در اولین ورود، پنل از شما می‌خواهد رمز مدیریتی جدیدی با حداقل ۱۲ نویسه تعیین کنید. هیچ رمز پیش‌فرضی وجود ندارد.
 
 ---
 
@@ -141,7 +139,7 @@ https://YOUR-WORKER.workers.dev/admin
 | Endpoint | Method | توضیح |
 |----------|--------|-------|
 | `/v1/chat/completions` | POST | چت با مدل‌های Grok |
-| `/v1/models` | GET | لیست تمام مدل‌ها |
+| `/v1/models` | GET | فقط مدل‌های رایگان/شامل پلن که وضعیتشان تأیید شده |
 | `/v1/models?capability=text` | GET | فقط مدل‌های متنی |
 | `/admin` | GET | پنل ادمین |
 
@@ -253,45 +251,9 @@ b1a00492-073a-47ea-816f-4c329264a828
 
 ## 📋 لیست مدل‌ها
 
-پروکسی شامل ۲۹ مدل هاردکد شده است:
+لیست مدل‌ها از سرویس اصلی به‌صورت پویا دریافت و برای مدت کوتاه cache می‌شود. endpoint عمومی `/v1/models` فقط مدل‌هایی را برمی‌گرداند که رایگان/شامل پلن بودنشان از فرادادهٔ صریح upstream قابل تأیید باشد. مدل‌های ناشناخته، پولی یا نیازمند ارتقا نمایش داده نمی‌شوند و endpoint چت نیز همین محدودیت را اعمال می‌کند.
 
-### مدل‌های متنی پیشرفته
-
-| مدل | Context | قابلیت‌ها |
-|-----|---------|----------|
-| `grok-4.7` | 500K | text, image, reasoning, tools |
-| `grok-4.6` | 500K | text, image, reasoning, tools |
-| `grok-4.5` | 500K | text, image, reasoning, tools |
-| `grok-4.3` | 1M | text, image, reasoning, tools |
-| `grok-4.20-reasoning` | 1M | text, image, reasoning, tools |
-| `grok-4.20-non-reasoning` | 1M | text, image, tools |
-| `grok-4` | 131K | text, image, reasoning, tools |
-| `grok-4-1-fast-reasoning` | 2M | text, reasoning, tools |
-| `grok-4-1-fast-non-reasoning` | 2M | text, tools |
-| `grok-3` | 131K | text, tools |
-| `grok-3-mini` | 131K | text, reasoning, tools |
-| `grok-build-0.1` | 256K | text, reasoning, tools |
-| `grok-code-fast-1` | 131K | text, tools |
-
-### مدل‌های تصویری
-
-- `grok-imagine-image`
-- `grok-imagine-image-quality`
-- `grok-imagine-image-2.0`
-- `grok-2-image-1212`
-
-### مدل‌های ویدیویی
-
-- `grok-imagine-video`
-- `grok-imagine-video-1.5`
-
-### مدل‌های صوتی
-
-- `grok-voice-think-fast-2.0`
-
-> 📝 برای مشاهده لیست کامل، به `/v1/models` درخواست بزنید.
-
----
+اگر سرویس اصلی شناسهٔ مدل‌ها را ارائه کند اما فرادادهٔ قیمت یا وضعیت رایگان را ندهد، پروژه از روی نام مدل حدس نمی‌زند و تا زمان قابل‌تأیید شدن شرایط، خطای مناسب برمی‌گرداند. در پنل ادمین، تب **Models** وضعیت به‌روزرسانی و تعداد مدل‌های تأییدشده را نشان می‌دهد.
 
 ## 🧪 مثال‌های استفاده
 
@@ -371,7 +333,7 @@ Model: grok-4.7
 
 ### نکات امنیتی
 
-- ✅ پسورد پیش‌فرض را فوراً تغییر دهید
+- ✅ در راه‌اندازی اولیه رمز مدیریتی قوی (حداقل ۱۲ نویسه) تعیین کنید
 - ✅ از HTTPS استفاده کنید (Cloudflare به‌صورت خودکار فراهم می‌کند)
 - ✅ API Keyها را در جای امن نگه دارید
 - ⚠️ این پروکسی برای استفاده شخصی طراحی شده، برای محیط‌های عمومی از احراز هویت قوی‌تر استفاده کنید
@@ -724,45 +686,9 @@ The proxy sends all requests to xAI with the following headers:
 
 ## 📋 Model List
 
-The proxy includes 29 hardcoded models:
+The model catalogue is fetched dynamically from the upstream service and cached briefly. The public `/v1/models` endpoint returns only models whose free/included eligibility can be verified from explicit upstream metadata. Unknown, paid, and upgrade-required models are not advertised, and the chat endpoint enforces the same allow-list.
 
-### Advanced Text Models
-
-| Model | Context | Capabilities |
-|-------|---------|--------------|
-| `grok-4.7` | 500K | text, image, reasoning, tools |
-| `grok-4.6` | 500K | text, image, reasoning, tools |
-| `grok-4.5` | 500K | text, image, reasoning, tools |
-| `grok-4.3` | 1M | text, image, reasoning, tools |
-| `grok-4.20-reasoning` | 1M | text, image, reasoning, tools |
-| `grok-4.20-non-reasoning` | 1M | text, image, tools |
-| `grok-4` | 131K | text, image, reasoning, tools |
-| `grok-4-1-fast-reasoning` | 2M | text, reasoning, tools |
-| `grok-4-1-fast-non-reasoning` | 2M | text, tools |
-| `grok-3` | 131K | text, tools |
-| `grok-3-mini` | 131K | text, reasoning, tools |
-| `grok-build-0.1` | 256K | text, reasoning, tools |
-| `grok-code-fast-1` | 131K | text, tools |
-
-### Image Models
-
-- `grok-imagine-image`
-- `grok-imagine-image-quality`
-- `grok-imagine-image-2.0`
-- `grok-2-image-1212`
-
-### Video Models
-
-- `grok-imagine-video`
-- `grok-imagine-video-1.5`
-
-### Audio Models
-
-- `grok-voice-think-fast-2.0`
-
-> 📝 Request `/v1/models` for the full list.
-
----
+If the upstream exposes model IDs without explicit pricing or free/included metadata, the proxy will not guess based on model names and will return a clear error until eligibility can be verified. The admin panel's **Models** tab shows sync status and the count of verified models.
 
 ## 🧪 Usage Examples
 
@@ -842,7 +768,7 @@ Model: grok-4.7
 
 ### Security Notes
 
-- ✅ Change the default password immediately
+- ✅ Set a strong initial admin password (at least 12 characters) during first-run setup
 - ✅ Use HTTPS (Cloudflare provides automatically)
 - ✅ Keep API keys in a secure location
 - ⚠️ This proxy is designed for personal use; use stronger authentication for public environments
