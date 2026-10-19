@@ -30,7 +30,6 @@ const GROK_USER_AGENT = 'grok-shell/1.0.44 (linux; x86_64)';
 const MODEL_CACHE_TTL = 5 * 60 * 1000;
 const MODEL_STALE_TTL = 60 * 60 * 1000;
 const UPSTREAM_TIMEOUT_MS = 10000;
-];
 
 // ============================================================
 //  Utilities
@@ -455,18 +454,19 @@ async function fetchFreeModelsForAccount(env, account, force = false) {
             // Eligibility remains unknown unless /v1/models provides explicit free metadata.
         }
 
+        const hasEntitlementMetadata = availableIds.size > 0 || blockedIds.size > 0;
         const models = upstreamModels.filter(model => {
             const state = explicitFreeState(model);
-            if (blockedIds.has(model.id) || state === false) return false;
-            return availableIds.has(model.id) || state === true;
+            if (blockedIds.has(model.id) || state !== true) return false;
+            return !hasEntitlementMetadata || availableIds.has(model.id);
         });
         if (!models.length) {
-            throw new Error('The upstream did not expose a verifiable free/included eligibility signal for any returned model');
+            throw new Error('The upstream did not expose an explicit free/included marker for any returned model. Plan availability alone is not proof of free usage.');
         }
         const entry = {
             models,
             fetchedAt: Date.now(),
-            source: availableIds.size ? 'cli-chat-proxy /v1/models + grok.com /rest/modes entitlement metadata' : 'explicit free/included metadata from upstream /v1/models',
+            source: hasEntitlementMetadata ? 'cli-chat-proxy /v1/models + grok.com /rest/modes eligibility metadata' : 'explicit free/included metadata from upstream /v1/models',
             verified: true,
             error: null,
         };
