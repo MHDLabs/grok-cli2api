@@ -15,7 +15,6 @@
 //  Author:     MHDLabs
 // ============================================================
 
-const DEFAULT_PASSWORD = '123456';
 const SESSION_TTL = 86400; // 24h
 const GROK_UPSTREAM = 'https://cli-chat-proxy.grok.com';
 const GROK_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
@@ -27,52 +26,10 @@ const GROK_CLIENT_VERSION = '1.0.44';
 const GROK_CLIENT_IDENTIFIER = 'grok-shell';
 const GROK_USER_AGENT = 'grok-shell/1.0.44 (linux; x86_64)';
 
-// ---------- Static Model Catalog ----------
-const GROK_MODELS = [
-    // Flagship & Latest
-    { id: 'grok-4.7', object: 'model', created: 1780000000, owned_by: 'xai', context_length: 500000, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4.6', object: 'model', created: 1770000000, owned_by: 'xai', context_length: 500000, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4.5', object: 'model', created: 1760000000, owned_by: 'xai', context_length: 500000, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4.3', object: 'model', created: 1750000000, owned_by: 'xai', context_length: 1000000, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-
-// Grok 4.20 Series
-{ id: 'grok-4.20-reasoning', object: 'model', created: 1748000000, owned_by: 'xai', context_length: 1000000, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4.20-non-reasoning', object: 'model', created: 1748000000, owned_by: 'xai', context_length: 1000000, capabilities: ['text', 'image', 'tools'] },
-{ id: 'grok-4.20-multi-agent-0309', object: 'model', created: 1748000000, owned_by: 'xai', context_length: 1000000, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-
-// Grok 4 Series
-{ id: 'grok-4', object: 'model', created: 1730000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4-latest', object: 'model', created: 1730000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4-0709', object: 'model', created: 1720000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'image', 'reasoning', 'tools'] },
-{ id: 'grok-4-fast-reasoning', object: 'model', created: 1730000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'reasoning', 'tools'] },
-{ id: 'grok-4-fast-non-reasoning', object: 'model', created: 1730000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'tools'] },
-{ id: 'grok-4-1-fast-reasoning', object: 'model', created: 1735000000, owned_by: 'xai', context_length: 2000000, capabilities: ['text', 'reasoning', 'tools'] },
-{ id: 'grok-4-1-fast-non-reasoning', object: 'model', created: 1735000000, owned_by: 'xai', context_length: 2000000, capabilities: ['text', 'tools'] },
-
-// Grok Build (Coding)
-{ id: 'grok-build-0.1', object: 'model', created: 1745000000, owned_by: 'xai', context_length: 256000, capabilities: ['text', 'reasoning', 'tools'] },
-{ id: 'grok-code-fast-1', object: 'model', created: 1730000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'tools'] },
-{ id: 'grok-code-fast', object: 'model', created: 1725000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'tools'] },
-
-// Grok 3 Series
-{ id: 'grok-3', object: 'model', created: 1710000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'tools'] },
-{ id: 'grok-3-latest', object: 'model', created: 1710000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'tools'] },
-{ id: 'grok-3-fast', object: 'model', created: 1710000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'tools'] },
-{ id: 'grok-3-mini', object: 'model', created: 1710000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'reasoning', 'tools'] },
-{ id: 'grok-3-mini-fast', object: 'model', created: 1710000000, owned_by: 'xai', context_length: 131072, capabilities: ['text', 'reasoning', 'tools'] },
-
-// Grok 2 Series (Legacy)
-{ id: 'grok-2-image-1212', object: 'model', created: 1700000000, owned_by: 'xai', capabilities: ['image'] },
-
-// Imagine (Image / Video)
-{ id: 'grok-imagine-image', object: 'model', created: 1769472000, owned_by: 'xai', capabilities: ['image'] },
-{ id: 'grok-imagine-image-quality', object: 'model', created: 1769472000, owned_by: 'xai', capabilities: ['image'] },
-{ id: 'grok-imagine-image-2.0', object: 'model', created: 1770000000, owned_by: 'xai', capabilities: ['image'] },
-{ id: 'grok-imagine-video', object: 'model', created: 1769472000, owned_by: 'xai', capabilities: ['video'] },
-{ id: 'grok-imagine-video-1.5', object: 'model', created: 1770000000, owned_by: 'xai', capabilities: ['video'] },
-
-// Voice
-{ id: 'grok-voice-think-fast-2.0', object: 'model', created: 1770000000, owned_by: 'xai', capabilities: ['audio'] },
+// ---------- Dynamic model discovery ----------
+const MODEL_CACHE_TTL = 5 * 60 * 1000;
+const MODEL_STALE_TTL = 60 * 60 * 1000;
+const UPSTREAM_TIMEOUT_MS = 10000;
 ];
 
 // ============================================================
@@ -101,13 +58,16 @@ function html(content, status = 200) {
     });
 }
 
-function grokHeaders(accessToken) {
+function grokHeaders(accessToken, extra = {}) {
     return {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ' + accessToken,
         'User-Agent': GROK_USER_AGENT,
+        'X-XAI-Token-Auth': 'xai-grok-cli',
         'x-grok-client-version': GROK_CLIENT_VERSION,
         'x-grok-client-identifier': GROK_CLIENT_IDENTIFIER,
+        ...extra,
     };
 }
 
@@ -237,7 +197,7 @@ async function oauthDeviceStart(env) {
         });
 
         const text = await res.text();
-        console.log('OAuth device start:', res.status, text);
+        
 
         if (!res.ok) {
             return { error: 'device_code_request_failed', status: res.status, raw: text };
@@ -247,7 +207,7 @@ async function oauthDeviceStart(env) {
         try {
             data = JSON.parse(text);
         } catch {
-            return { error: 'invalid_json', raw: text };
+            
         }
 
         if (data.user_code && !data.verification_uri_complete) {
@@ -278,16 +238,313 @@ async function oauthDevicePoll(env, deviceCode) {
         });
 
         const text = await res.text();
-        console.log('OAuth poll:', res.status, text);
+        
 
         try {
             return JSON.parse(text);
         } catch {
-            return { error: 'invalid_json', raw: text };
+            
         }
     } catch (e) {
         return { error: 'exception', message: String(e) };
     }
+}
+
+
+function decodeJwtClaims(token) {
+    try {
+        const part = String(token || '').split('.')[1];
+        if (!part) return {};
+        const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+        return JSON.parse(atob(padded));
+    } catch {
+        return {};
+    }
+}
+
+function accountUserId(account) {
+    if (account && account.user_id) return String(account.user_id);
+    const claims = decodeJwtClaims(account && account.access_token);
+    const candidate = claims.xai_user_id || claims.user_id || claims.userId || claims.uid || claims.sub;
+    return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
+}
+
+function normalizeModelPayload(payload) {
+    const raw = Array.isArray(payload) ? payload :
+        (Array.isArray(payload && payload.data) ? payload.data :
+        (Array.isArray(payload && payload.models) ? payload.models : []));
+    const seen = new Set();
+    return raw.filter(model => model && typeof model.id === 'string' && model.id.trim())
+        .map(model => ({
+            ...model,
+            id: model.id.trim(),
+            object: model.object || 'model',
+            owned_by: model.owned_by || 'xai',
+            capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
+        }))
+        .filter(model => {
+            if (seen.has(model.id)) return false;
+            seen.add(model.id);
+            return true;
+        });
+}
+
+function explicitFreeState(model) {
+    const flags = [
+        'is_free', 'isFree', 'free', 'free_tier', 'freeTier',
+        'included', 'is_included', 'included_in_plan', 'includedInPlan',
+    ];
+    for (const key of flags) {
+        if (typeof model[key] === 'boolean') return model[key];
+    }
+    const fields = [
+        model.billing_tier, model.billingTier, model.pricing_tier,
+        model.pricingTier, model.access_tier, model.accessTier, model.plan,
+        model.tier, model.billing, model.pricing_type, model.pricingType,
+    ];
+    const label = fields.filter(v => typeof v === 'string').join(' ').toLowerCase();
+    if (/\b(free|included|complimentary)\b/.test(label)) return true;
+    if (/\b(paid|premium|pro|upgrade|required subscription)\b/.test(label)) return false;
+    const pricing = model.pricing || model.price;
+    if (pricing && typeof pricing === 'object') {
+        const amounts = [];
+        for (const key of ['input', 'output', 'prompt', 'completion', 'input_price', 'output_price']) {
+            const value = pricing[key];
+            if (typeof value === 'number') amounts.push(value);
+            else if (value && typeof value === 'object') {
+                for (const nested of ['price', 'amount', 'per_token', 'per_1m_tokens']) {
+                    if (typeof value[nested] === 'number') amounts.push(value[nested]);
+                }
+            }
+        }
+        if (amounts.length && amounts.every(value => value === 0)) return true;
+        if (amounts.some(value => value > 0)) return false;
+    }
+    return null;
+}
+
+function modeAvailability(mode) {
+    const a = mode && mode.availability;
+    if (!a || typeof a !== 'object') return 'unknown';
+    const blocked = ['requiresUpgrade', 'requires_upgrade', 'unavailable', 'comingSoon', 'coming_soon']
+        .some(key => Object.prototype.hasOwnProperty.call(a, key) && a[key] !== null && a[key] !== false);
+    if (blocked) return 'blocked';
+    if (Object.prototype.hasOwnProperty.call(a, 'available') && a.available !== null && a.available !== false) return 'available';
+    return 'unknown';
+}
+
+async function shortTokenFingerprint(token) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(token || '')));
+    return Array.from(new Uint8Array(digest).slice(0, 12), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort('upstream timeout'), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function refreshAccountToken(env, account) {
+    if (!account || !account.refresh_token) return null;
+    try {
+        const endpoints = await getOidcEndpoints(env);
+        const response = await fetchWithTimeout(endpoints.token_endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'Accept': 'application/json',
+                'User-Agent': GROK_USER_AGENT,
+                'x-grok-client-version': GROK_CLIENT_VERSION,
+                'x-grok-client-identifier': GROK_CLIENT_IDENTIFIER,
+            },
+            body: 'grant_type=refresh_token&refresh_token=' +
+                encodeURIComponent(account.refresh_token) + '&client_id=' + encodeURIComponent(GROK_CLIENT_ID),
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (!data || !data.access_token) return null;
+        const updated = {
+            ...account,
+            access_token: data.access_token,
+            refresh_token: data.refresh_token || account.refresh_token,
+            expires_at: data.expires_in ? Date.now() + Number(data.expires_in) * 1000 : account.expires_at,
+        };
+        const accounts = await kvGet(env, 'accounts:list', []);
+        const index = accounts.findIndex(item =>
+            item.access_token === account.access_token ||
+            (item.email === account.email && item.createdAt === account.createdAt));
+        if (index >= 0) {
+            accounts[index] = { ...accounts[index], ...updated };
+            await kvPut(env, 'accounts:list', accounts);
+        }
+        return updated;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchAccountRequest(env, account, url, init = {}) {
+    let currentAccount = account;
+    const send = token => fetchWithTimeout(url, {
+        ...init,
+        headers: { ...grokHeaders(token), ...(init.headers || {}) },
+    });
+    let response = await send(currentAccount.access_token);
+    if (response.status === 401 && currentAccount.refresh_token) {
+        const refreshed = await refreshAccountToken(env, currentAccount);
+        if (refreshed) {
+            currentAccount = refreshed;
+            response = await send(currentAccount.access_token);
+        }
+    }
+    return { response, account: currentAccount };
+}
+
+async function fetchFreeModelsForAccount(env, account, force = false) {
+    const fingerprint = await shortTokenFingerprint(account.access_token);
+    const cacheKey = 'models:free:' + fingerprint;
+    const cached = await kvGet(env, cacheKey);
+    if (!force && cached && Array.isArray(cached.models) &&
+        Date.now() - cached.fetchedAt < MODEL_CACHE_TTL) {
+        return { ...cached, fromCache: true };
+    }
+
+    try {
+        let modelRequest = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/models', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+        });
+        account = modelRequest.account;
+        if (!modelRequest.response.ok) {
+            throw new Error('Upstream model endpoint returned HTTP ' + modelRequest.response.status);
+        }
+        const upstreamModels = normalizeModelPayload(await modelRequest.response.json());
+        if (!upstreamModels.length) throw new Error('Upstream model endpoint returned no valid model IDs');
+
+        const availableIds = new Set();
+        const blockedIds = new Set();
+        try {
+            const userId = accountUserId(account);
+            const modeRequest = await fetchAccountRequest(env, account, 'https://grok.com/rest/modes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(userId ? { 'x-userid': userId } : {}),
+                    ...(account.email ? { 'x-email': String(account.email) } : {}),
+                },
+                body: JSON.stringify({ locale: 'en' }),
+            });
+            account = modeRequest.account;
+            if (modeRequest.response.ok) {
+                const modePayload = await modeRequest.response.json();
+                if (Array.isArray(modePayload && modePayload.modes)) {
+                    for (const mode of modePayload.modes) {
+                        if (!mode || typeof mode.id !== 'string') continue;
+                        const state = modeAvailability(mode);
+                        if (state === 'available') availableIds.add(mode.id);
+                        if (state === 'blocked') blockedIds.add(mode.id);
+                    }
+                }
+            }
+        } catch {
+            // Eligibility remains unknown unless /v1/models provides explicit free metadata.
+        }
+
+        const models = upstreamModels.filter(model => {
+            const state = explicitFreeState(model);
+            if (blockedIds.has(model.id) || state === false) return false;
+            return availableIds.has(model.id) || state === true;
+        });
+        if (!models.length) {
+            throw new Error('The upstream did not expose a verifiable free/included eligibility signal for any returned model');
+        }
+        const entry = {
+            models,
+            fetchedAt: Date.now(),
+            source: availableIds.size ? 'cli-chat-proxy /v1/models + grok.com /rest/modes entitlement metadata' : 'explicit free/included metadata from upstream /v1/models',
+            verified: true,
+            error: null,
+        };
+        await kvPut(env, cacheKey, entry);
+        return { ...entry, fromCache: false };
+    } catch (error) {
+        if (cached && Array.isArray(cached.models) && cached.models.length &&
+            Date.now() - Number(cached.fetchedAt || 0) < MODEL_STALE_TTL) {
+            return {
+                ...cached,
+                fromCache: true,
+                stale: true,
+                error: 'Live refresh failed; serving the last verified catalogue temporarily.',
+            };
+        }
+        return {
+            models: [],
+            fetchedAt: null,
+            source: null,
+            verified: false,
+            fromCache: false,
+            error: String(error && error.message || 'Unable to verify free model availability'),
+        };
+    }
+}
+
+async function getFreeModelCatalog(env, force = false) {
+    const accounts = await kvGet(env, 'accounts:list', []);
+    const active = accounts.filter(account => account && account.active && account.access_token);
+    if (!active.length) {
+        return { models: [], fetchedAt: null, source: null, verified: false, error: 'No active Grok account configured.' };
+    }
+    const results = await Promise.all(active.map(account =>
+        fetchFreeModelsForAccount(env, account, force).catch(error => ({
+            models: [], fetchedAt: null, verified: false, source: null,
+            error: String(error && error.message || 'Model discovery failed'),
+        }))
+    ));
+    const byId = new Map();
+    for (const result of results) {
+        for (const model of result.models || []) {
+            if (!byId.has(model.id)) byId.set(model.id, model);
+        }
+    }
+    const models = Array.from(byId.values());
+    const timestamps = results.map(result => result.fetchedAt || 0).filter(Boolean);
+    const errors = results.map(result => result.error).filter(Boolean);
+    return {
+        models,
+        fetchedAt: timestamps.length ? Math.max(...timestamps) : null,
+        source: results.find(result => result.source)?.source || null,
+        verified: models.length > 0 && results.some(result => result.verified),
+        stale: results.some(result => result.stale),
+        fromCache: results.every(result => result.fromCache),
+        error: models.length ? (errors.length ? errors.join('; ') : null) : (errors[0] || 'No verified free models are available.'),
+        accountCount: active.length,
+    };
+}
+
+async function pickAccountForModel(env, modelId) {
+    const accounts = await kvGet(env, 'accounts:list', []);
+    const active = accounts.filter(account => account && account.active && account.access_token)
+        .sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
+    for (const account of active) {
+        const catalog = await fetchFreeModelsForAccount(env, account, false);
+        if (!(catalog.models || []).some(model => model.id === modelId)) continue;
+        const current = await kvGet(env, 'accounts:list', []);
+        const index = current.findIndex(item =>
+            item.access_token === account.access_token ||
+            (item.email === account.email && item.createdAt === account.createdAt));
+        if (index >= 0) {
+            current[index].lastUsed = Date.now();
+            await kvPut(env, 'accounts:list', current);
+            return current[index];
+        }
+        return account;
+    }
+    return null;
 }
 
 // ============================================================
@@ -418,6 +675,21 @@ function adminPage() {
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     a { color: var(--accent2); }
+    .models-list { display: grid; gap: 8px; margin-top: 12px; }
+    .model-item { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--bg); }
+    .model-id { font-family:monospace; overflow-wrap:anywhere; font-size:13px; }
+    .model-cap { font-size:11px; border:1px solid var(--border); color:var(--muted); padding:2px 6px; border-radius:14px; }
+    button:focus-visible, input:focus-visible, a:focus-visible { outline:2px solid var(--accent2); outline-offset:2px; }
+    @media (max-width: 640px) {
+      .container { padding:14px; }
+      .card { padding:16px; }
+      .header { gap:12px; margin-bottom:20px; }
+      .tabs { flex-wrap:wrap; }
+      .tab { flex:1 1 40%; }
+      .row { flex-direction:column; align-items:stretch; }
+      .row > * { width:100%; }
+      .login-box { padding:24px; }
+    }
     </style>
     </head>
     <body>
@@ -435,6 +707,18 @@ function adminPage() {
     </div>
     </div>
 
+    <!-- FIRST-RUN SETUP -->
+    <div id="setupView" class="login-wrap hidden">
+    <div class="login-box">
+    <div class="logo-icon" style="margin:0 auto 16px;width:48px;height:48px;font-size:22px;">&#128274;</div>
+    <h1>Secure your panel</h1>
+    <p>Create the first admin password. Use at least 12 characters.</p>
+    <input type="password" id="setupPass" autocomplete="new-password" placeholder="New admin password (12+ chars)">
+    <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="doSetup()">Set password</button>
+    <div id="setupError" class="error hidden"></div>
+    </div>
+    </div>
+
     <!-- DASHBOARD -->
     <div id="dashView" class="container hidden">
     <div class="header">
@@ -445,6 +729,7 @@ function adminPage() {
     <div class="tabs">
     <button class="tab active" data-tab="accounts" onclick="switchTab(this)">Accounts</button>
     <button class="tab" data-tab="apikeys" onclick="switchTab(this)">API Keys</button>
+    <button class="tab" data-tab="models" onclick="switchTab(this)">Models</button>
     <button class="tab" data-tab="settings" onclick="switchTab(this)">Settings</button>
     </div>
 
@@ -497,6 +782,19 @@ function adminPage() {
     </div>
     </div>
 
+    <!-- Models -->
+    <div id="tab-models" class="hidden">
+    <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h3 style="margin:0;">&#129302; Live model catalogue <span class="badge green" id="modelsCount">0</span></h3>
+    <button class="btn btn-primary btn-sm" id="modelsRefreshBtn" onclick="refreshModels()">Refresh</button>
+    </div>
+    <p id="modelsMeta" style="font-size:13px;color:var(--muted);margin-top:12px;">Model eligibility is verified against upstream metadata.</p>
+    <div id="modelsError" class="error-box hidden"></div>
+    <div id="modelsList" class="models-list"><div class="empty">Loading models…</div></div>
+    </div>
+    </div>
+
     <!-- Settings -->
     <div id="tab-settings" class="hidden">
     <div class="card">
@@ -527,6 +825,10 @@ function adminPage() {
     let pollTimer = null;
     let oauthWindow = null;
 
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>\"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
     function toast(msg) {
         const t = document.getElementById('toast');
         t.textContent = msg; t.classList.add('show');
@@ -542,18 +844,40 @@ function adminPage() {
     // --- Auth ---
     async function checkAuth() {
         const r = await api('/admin/api/check');
-        if (r.ok) { showDash(); loadAll(); } else { showLogin(); }
+        if (r.setup_required) showSetup();
+        else if (r.ok) { showDash(); loadAll(); }
+        else showLogin();
     }
 
     function showLogin() {
         document.getElementById('loginView').classList.remove('hidden');
+        document.getElementById('setupView').classList.add('hidden');
+        document.getElementById('dashView').classList.add('hidden');
+    }
+
+    function showSetup() {
+        document.getElementById('loginView').classList.add('hidden');
+        document.getElementById('setupView').classList.remove('hidden');
         document.getElementById('dashView').classList.add('hidden');
     }
 
     function showDash() {
         document.getElementById('loginView').classList.add('hidden');
+        document.getElementById('setupView').classList.add('hidden');
         document.getElementById('dashView').classList.remove('hidden');
         document.getElementById('proxyUrl').textContent = location.origin + '/v1/chat/completions';
+    }
+
+    async function doSetup() {
+        const password = document.getElementById('setupPass').value;
+        const err = document.getElementById('setupError');
+        err.classList.add('hidden');
+        const r = await api('/admin/api/setup', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+        });
+        if (r.ok) { showDash(); loadAll(); }
+        else { err.textContent = r.message || r.error || 'Could not set password'; err.classList.remove('hidden'); }
     }
 
     async function doLogin() {
@@ -580,13 +904,13 @@ function adminPage() {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
         currentTab = el.dataset.tab;
-        ['accounts', 'apikeys', 'settings'].forEach(t => {
+        ['accounts', 'apikeys', 'models', 'settings'].forEach(t => {
             document.getElementById('tab-' + t).classList.toggle('hidden', t !== currentTab);
         });
     }
 
     // --- Data ---
-    async function loadAll() { await loadAccounts(); await loadKeys(); }
+    async function loadAll() { await loadAccounts(); await loadKeys(); await loadModels(); }
 
     async function loadAccounts() {
         const r = await api('/admin/api/accounts');
@@ -600,8 +924,8 @@ function adminPage() {
         list.innerHTML = r.accounts.map((a, i) => \`
         <div class="row" style="padding:10px 0;border-bottom:1px solid var(--border);">
         <div>
-        <div style="font-size:14px;font-weight:600;">\${a.email || 'Account ' + (i+1)}</div>
-        <div style="font-size:12px;color:var(--muted);">Added: \${new Date(a.createdAt).toLocaleString()}</div>
+        <div style="font-size:14px;font-weight:600;">\${escapeHtml(a.email || 'Account ' + (i+1))}</div>
+        <div style="font-size:12px;color:var(--muted);">Added: \${escapeHtml(new Date(a.createdAt).toLocaleString())}</div>
         </div>
         <span class="badge \${a.active ? 'green' : 'red'}">\${a.active ? 'Active' : 'Disabled'}</span>
         <button class="btn btn-danger btn-sm" onclick="delAccount(\${i})" style="flex:0;">Delete</button>
@@ -627,8 +951,8 @@ function adminPage() {
         list.innerHTML = r.keys.map((k, i) => \`
         <div class="row" style="padding:10px 0;border-bottom:1px solid var(--border);">
         <div>
-        <div style="font-family:monospace;font-size:12px;">\${k.key.substring(0,20)}...</div>
-        <div style="font-size:12px;color:var(--muted);">\${k.label} — usage: \${k.usage || 0}</div>
+        <div style="font-family:monospace;font-size:12px;">\${escapeHtml(k.masked_key || 'masked')}...</div>
+        <div style="font-size:12px;color:var(--muted);">\${escapeHtml(k.label || '')} — usage: \${k.usage || 0}</div>
         </div>
         <span class="badge \${k.active ? 'green' : 'red'}">\${k.active ? 'Active' : 'Disabled'}</span>
         <button class="btn btn-danger btn-sm" onclick="delKey(\${i})" style="flex:0;">Delete</button>
@@ -657,6 +981,60 @@ function adminPage() {
         loadKeys();
     }
 
+    // --- Live model catalogue ---
+    function renderModels(r) {
+        const list = document.getElementById('modelsList');
+        const error = document.getElementById('modelsError');
+        document.getElementById('modelsCount').textContent = String(r.count || (r.models || []).length || 0);
+        const updated = r.fetched_at ? new Date(r.fetched_at).toLocaleString() : 'not yet synced';
+        document.getElementById('modelsMeta').textContent =
+            'Source: ' + (r.source || 'upstream metadata not verified') +
+            ' · Last sync: ' + updated +
+            (r.stale ? ' · Showing cached catalogue' : '') +
+            ' · Accounts checked: ' + (r.account_count || 0);
+        if (r.error) {
+            error.textContent = r.error;
+            error.classList.remove('hidden');
+        } else error.classList.add('hidden');
+        const models = Array.isArray(r.models) ? r.models : [];
+        if (!models.length) {
+            list.innerHTML = '';
+            const empty = document.createElement('div');
+            empty.className = 'empty';
+            empty.textContent = 'No models can currently be verified as free/included. The panel will not guess from model names.';
+            list.appendChild(empty);
+            return;
+        }
+        list.innerHTML = models.map(model => {
+            const caps = Array.isArray(model.capabilities)
+                ? model.capabilities.map(cap => '<span class="model-cap">' + escapeHtml(cap) + '</span>').join('')
+                : '';
+            return '<div class="model-item"><strong class="model-id">' + escapeHtml(model.id) + '</strong>' + caps + '</div>';
+        }).join('');
+    }
+
+    async function loadModels() {
+        const r = await api('/admin/api/models');
+        if (Array.isArray(r.models)) renderModels(r);
+        else renderModels({ models: [], error: r.error || 'Could not load the upstream model catalogue.' });
+    }
+
+    async function refreshModels() {
+        const btn = document.getElementById('modelsRefreshBtn');
+        btn.disabled = true;
+        btn.textContent = 'Refreshing…';
+        try {
+            const r = await api('/admin/api/models/refresh', { method: 'POST' });
+            renderModels(r);
+            toast(r.error ? 'Model refresh completed with warnings' : 'Model catalogue refreshed');
+        } catch {
+            toast('Could not refresh models');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Refresh';
+        }
+    }
+
     // --- OAuth ---
     async function startOAuth() {
         const btn = document.getElementById('oauthBtn');
@@ -673,7 +1051,7 @@ function adminPage() {
                 headers: { 'Content-Type': 'application/json' },
             });
             const r = await res.json();
-            console.log('OAuth start response:', r);
+            
 
             if (r.error) {
                 const errDiv = document.getElementById('oauthError');
@@ -732,9 +1110,9 @@ function adminPage() {
                 body: JSON.stringify({ device_code: deviceCode }),
             });
             const r = await res.json();
-            console.log('OAuth poll:', r);
+            
 
-            if (r.access_token) {
+            if (r.complete) {
                 clearInterval(pollTimer); pollTimer = null;
                 document.getElementById('oauthSpinner').classList.add('hidden');
                 document.getElementById('oauthStatus').textContent = '\\u2705 Account added successfully!';
@@ -818,33 +1196,73 @@ export default {
 
         // ---------- Admin API: Check ----------
         if (path === '/admin/api/check') {
+            const configuredPassword = await kvGet(env, 'auth:password', null);
+            if (!configuredPassword) return json({ ok: false, setup_required: true });
             const ok = await requireAdmin(request, env);
-            return json({ ok });
+            return json({ ok, setup_required: false });
         }
 
         // ---------- Admin API: Login ----------
         if (path === '/admin/api/login' && request.method === 'POST') {
-            const { password } = await request.json();
-            const stored = await kvGet(env, 'auth:password', DEFAULT_PASSWORD);
-            if (password === stored) {
-                const token = await createSession(env);
-                return new Response(JSON.stringify({ ok: true }), {
-                    status: 200,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Set-Cookie': `grok_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}`,
-                    },
-                });
+            const configuredPassword = await kvGet(env, 'auth:password', null);
+            if (!configuredPassword) return json({ ok: false, setup_required: true }, 428);
+            let payload;
+            try { payload = await request.json(); } catch { return json({ ok: false, error: 'invalid_json' }, 400); }
+            const password = typeof payload.password === 'string' ? payload.password : '';
+            const ip = (request.headers.get('CF-Connecting-IP') || 'unknown').slice(0, 100);
+            const rateKey = 'login:attempts:' + ip;
+            const now = Date.now();
+            let attempts = await kvGet(env, rateKey, { start: now, count: 0 });
+            if (!attempts || now - Number(attempts.start || 0) >= 15 * 60 * 1000) attempts = { start: now, count: 0 };
+            if (Number(attempts.count || 0) >= 8) {
+                return json({ ok: false, error: 'too_many_attempts', message: 'Too many failed login attempts. Try again later.' }, 429);
             }
-            return json({ ok: false, error: 'invalid password' }, 401);
+            if (password !== configuredPassword) {
+                attempts.count = Number(attempts.count || 0) + 1;
+                await env.GROK_KV.put(rateKey, JSON.stringify(attempts), { expirationTtl: 900 });
+                return json({ ok: false, error: 'invalid_password' }, 401);
+            }
+            await kvDel(env, rateKey);
+            const token = await createSession(env);
+            const secure = url.protocol === 'https:' ? '; Secure' : '';
+            return new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Set-Cookie': 'grok_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + SESSION_TTL + secure,
+                },
+            });
+        }
+
+        // ---------- First-run password setup ----------
+        if (path === '/admin/api/setup' && request.method === 'POST') {
+            const configuredPassword = await kvGet(env, 'auth:password', null);
+            if (configuredPassword) return json({ ok: false, error: 'already_configured' }, 409);
+            let payload;
+            try { payload = await request.json(); } catch { return json({ ok: false, error: 'invalid_json' }, 400); }
+            const password = typeof payload.password === 'string' ? payload.password : '';
+            if (password.length < 12) {
+                return json({ ok: false, error: 'weak_password', message: 'Use a password of at least 12 characters.' }, 400);
+            }
+            await kvPut(env, 'auth:password', password);
+            const token = await createSession(env);
+            const secure = url.protocol === 'https:' ? '; Secure' : '';
+            return new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Set-Cookie': 'grok_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + SESSION_TTL + secure,
+                },
+            });
         }
 
         // ---------- Admin API: Logout ----------
         if (path === '/admin/api/logout' && request.method === 'POST') {
             const token = getCookie(request, 'grok_session');
             if (token) await kvDel(env, `session:${token}`);
+            const secure = url.protocol === 'https:' ? '; Secure' : '';
             return new Response(JSON.stringify({ ok: true }), {
-                headers: { 'Content-Type': 'application/json', 'Set-Cookie': 'grok_session=; Path=/; Max-Age=0' },
+                headers: { 'Content-Type': 'application/json', 'Set-Cookie': 'grok_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + secure },
             });
         }
 
@@ -852,6 +1270,21 @@ export default {
         if (path.startsWith('/admin/api/')) {
             const authed = await requireAdmin(request, env);
             if (!authed) return json({ error: 'unauthorized' }, 401);
+
+            // --- Live Models ---
+            if ((path === '/admin/api/models' && request.method === 'GET') || (path === '/admin/api/models/refresh' && request.method === 'POST')) {
+                const catalog = await getFreeModelCatalog(env, request.method === 'POST');
+                return json({
+                    models: catalog.models || [],
+                    count: (catalog.models || []).length,
+                    fetched_at: catalog.fetchedAt || null,
+                    source: catalog.source || null,
+                    verified: !!catalog.verified,
+                    stale: !!catalog.stale,
+                    error: catalog.error || null,
+                    account_count: catalog.accountCount || 0,
+                });
+            }
 
             // --- Accounts ---
             if (path === '/admin/api/accounts' && request.method === 'GET') {
@@ -876,7 +1309,7 @@ export default {
             // --- API Keys ---
             if (path === '/admin/api/keys' && request.method === 'GET') {
                 const keys = await kvGet(env, 'apikeys:list', []);
-                return json({ keys });
+                return json({ keys: keys.map(k => ({ label: k.label, createdAt: k.createdAt, active: !!k.active, usage: k.usage || 0, masked_key: k.key ? k.key.slice(0, 7) + '…' + k.key.slice(-4) : '' })) });
             }
 
             if (path === '/admin/api/keys' && request.method === 'POST') {
@@ -896,37 +1329,44 @@ export default {
             // --- OAuth ---
             if (path === '/admin/api/oauth/start' && request.method === 'POST') {
                 const data = await oauthDeviceStart(env);
-                console.log('oauth/start result:', JSON.stringify(data));
+                
                 return json(data);
             }
 
             if (path === '/admin/api/oauth/poll' && request.method === 'POST') {
-                const { device_code } = await request.json();
+                let payload;
+                try { payload = await request.json(); } catch { return json({ error: 'invalid_json' }, 400); }
+                const device_code = typeof payload.device_code === 'string' ? payload.device_code : '';
+                if (!device_code || device_code.length > 4096) return json({ error: 'invalid_device_code' }, 400);
                 const data = await oauthDevicePoll(env, device_code);
 
                 if (data.access_token) {
                     const accounts = await kvGet(env, 'accounts:list', []);
                     accounts.push({
-                        email: data.email || `grok-${Date.now()}`,
-                                  access_token: data.access_token,
-                                  refresh_token: data.refresh_token || null,
-                                  expires_at: data.expires_in ? Date.now() + data.expires_in * 1000 : null,
-                                  active: true,
-                                  createdAt: Date.now(),
-                                  lastUsed: null,
+                        email: data.email || 'grok-' + Date.now(),
+                        user_id: data.user_id || data.userId || data.sub || accountUserId({ access_token: data.access_token }) || null,
+                        access_token: data.access_token,
+                        refresh_token: data.refresh_token || null,
+                        expires_at: data.expires_in ? Date.now() + data.expires_in * 1000 : null,
+                        active: true,
+                        createdAt: Date.now(),
+                        lastUsed: null,
                     });
                     await kvPut(env, 'accounts:list', accounts);
+                    return json({ ok: true, complete: true });
                 }
-
-                return json(data);
+                return json({ error: data.error || 'authorization_pending', error_description: data.error_description || null });
             }
 
             // --- Password ---
             if (path === '/admin/api/password' && request.method === 'POST') {
-                const { old, new: newPass } = await request.json();
-                const stored = await kvGet(env, 'auth:password', DEFAULT_PASSWORD);
-                if (old !== stored) return json({ ok: false, error: 'Current password is incorrect' }, 400);
-                if (!newPass || newPass.length < 4) return json({ ok: false, error: 'New password must be at least 4 characters' }, 400);
+                let payload;
+                try { payload = await request.json(); } catch { return json({ ok: false, error: 'invalid_json' }, 400); }
+                const old = typeof payload.old === 'string' ? payload.old : '';
+                const newPass = typeof payload.new === 'string' ? payload.new : '';
+                const stored = await kvGet(env, 'auth:password', null);
+                if (!stored || old !== stored) return json({ ok: false, error: 'Current password is incorrect' }, 400);
+                if (newPass.length < 12) return json({ ok: false, error: 'New password must be at least 12 characters' }, 400);
                 await kvPut(env, 'auth:password', newPass);
                 return json({ ok: true });
             }
@@ -948,45 +1388,89 @@ export default {
                 }, 401);
             }
 
-            // ---------- Models endpoint ----------
+            // ---------- Live, verified free-model endpoint ----------
             if (path === '/v1/models') {
-                const capFilter = url.searchParams.get('capability');
-                let models = GROK_MODELS;
-                if (capFilter) {
-                    models = models.filter(m => (m.capabilities || []).includes(capFilter));
+                const catalog = await getFreeModelCatalog(env);
+                if (!catalog.models.length) {
+                    return json({
+                        error: {
+                            message: 'Could not verify free model availability from the upstream service. ' + (catalog.error || ''),
+                            type: 'server_error',
+                            code: 'free_model_catalog_unavailable',
+                        },
+                    }, 503);
                 }
-                return json({ object: 'list', data: models });
+                const capFilter = url.searchParams.get('capability');
+                let models = catalog.models;
+                if (capFilter) models = models.filter(model => (model.capabilities || []).includes(capFilter));
+                return json({
+                    object: 'list',
+                    data: models.map(model => ({
+                        id: model.id,
+                        object: 'model',
+                        created: Number.isFinite(model.created) ? model.created : undefined,
+                        owned_by: model.owned_by || 'xai',
+                        ...(Array.isArray(model.capabilities) && model.capabilities.length ? { capabilities: model.capabilities } : {}),
+                    })),
+                });
             }
 
             // ---------- Chat completions ----------
-            const account = await pickAccount(env);
-            if (!account) {
-                return json({
-                    error: {
-                        message: 'No active Grok account configured. Add one at /admin \u2192 Accounts.',
-                        type: 'server_error',
-                        code: 'no_account',
-                    },
-                }, 503);
-            }
-
             let body;
             try {
                 body = await request.json();
             } catch (e) {
                 return json({ error: { message: 'Invalid JSON body: ' + e.message, type: 'invalid_request_error' } }, 400);
             }
+            if (!body || typeof body.model !== 'string' || !body.model.trim()) {
+                return json({ error: { message: 'A model ID is required.', type: 'invalid_request_error', code: 'model_required' } }, 400);
+            }
+            if (!Array.isArray(body.messages)) {
+                return json({ error: { message: 'messages must be an array.', type: 'invalid_request_error', code: 'invalid_messages' } }, 400);
+            }
 
-            // Forward to Grok upstream with proper client identity headers
-            const upstreamRes = await fetch(`${GROK_UPSTREAM}/v1/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    ...grokHeaders(account.access_token),
-                                            'x-grok-session-id': randomHex(16),
-                                            'x-grok-conv-id': randomHex(16),
-                },
-                body: JSON.stringify(body),
-            });
+            const account = await pickAccountForModel(env, body.model);
+            if (!account) {
+                const catalog = await getFreeModelCatalog(env);
+                if (!catalog.models.length) {
+                    return json({
+                        error: {
+                            message: 'Could not verify free model eligibility. ' + (catalog.error || ''),
+                            type: 'server_error',
+                            code: 'free_model_catalog_unavailable',
+                        },
+                    }, 503);
+                }
+                return json({
+                    error: {
+                        message: 'The requested model is unavailable or is not verified as free/included for the configured Grok accounts.',
+                        type: 'invalid_request_error',
+                        code: 'model_not_allowed',
+                    },
+                }, 400);
+            }
+
+            let upstreamResult;
+            try {
+                upstreamResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'x-grok-model-override': body.model,
+                        'x-grok-session-id': randomHex(16),
+                        'x-grok-conv-id': randomHex(16),
+                    },
+                    body: JSON.stringify(body),
+                });
+            } catch (error) {
+                return json({
+                    error: {
+                        message: 'The Grok upstream request failed or timed out.',
+                        type: 'server_error',
+                        code: 'upstream_request_failed',
+                    },
+                }, 502);
+            }
+            const upstreamRes = upstreamResult.response;
 
             // Increment usage counter
             const keys = await kvGet(env, 'apikeys:list', []);
