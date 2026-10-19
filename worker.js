@@ -411,10 +411,16 @@ async function refreshAccountToken(env, account) {
 
 async function fetchAccountRequest(env, account, url, init = {}) {
     let currentAccount = account;
-    const send = token => fetchWithTimeout(url, {
-        ...init,
-        headers: { ...grokHeaders(token), ...(init.headers || {}) },
-    });
+    const send = token => {
+        const identityHeaders = url.startsWith(GROK_UPSTREAM + '/') ? {
+            ...(accountUserId(currentAccount) ? { 'x-userid': accountUserId(currentAccount) } : {}),
+            ...(currentAccount.email ? { 'x-email': String(currentAccount.email) } : {}),
+        } : {};
+        return fetchWithTimeout(url, {
+            ...init,
+            headers: { ...grokHeaders(token), ...identityHeaders, ...(init.headers || {}) },
+        });
+    };
     let response = await send(currentAccount.access_token);
     if (response.status === 401 && currentAccount.refresh_token) {
         const refreshed = await refreshAccountToken(env, currentAccount);
@@ -427,8 +433,7 @@ async function fetchAccountRequest(env, account, url, init = {}) {
 }
 
 async function fetchFreeModelsForAccount(env, account, force = false) {
-    const fingerprint = await shortTokenFingerprint(account.access_token);
-    const cacheKey = 'models:free:' + fingerprint;
+    let cacheKey = 'models:free:' + await shortTokenFingerprint(account.access_token);
     const cached = await kvGet(env, cacheKey);
     if (!force && cached && cached.verified === true &&
         Date.now() - Number(cached.fetchedAt || 0) < MODEL_CACHE_TTL) {
@@ -447,6 +452,7 @@ async function fetchFreeModelsForAccount(env, account, force = false) {
             },
         });
         account = userResult.account;
+        cacheKey = 'models:free:' + await shortTokenFingerprint(account.access_token);
         if (!userResult.response.ok) {
             throw new Error('Upstream subscription endpoint returned HTTP ' + userResult.response.status);
         }
