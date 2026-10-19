@@ -134,6 +134,8 @@ test('public models endpoint returns the Free account live catalog and omits una
     assert.equal(userCall.init.headers['User-Agent'], 'grok-shell/1.0.44 (linux; x86_64)');
     assert.equal(userCall.init.headers['x-grok-client-identifier'], 'grok-shell');
     assert.equal(userCall.init.headers['x-grok-client-version'], '1.0.44');
+    assert.equal(userCall.init.headers['x-userid'], 'test-user');
+    assert.equal(userCall.init.headers['x-email'], 'test@example.invalid');
     assert.ok(upstream.calls.some(call => call.url.endsWith('/v1/models')));
   } finally {
     upstream.restore();
@@ -215,6 +217,8 @@ test('chat forwards exact client headers and the validated model override', asyn
     assert.equal(chatCall.init.headers['x-grok-client-identifier'], 'grok-shell');
     assert.equal(chatCall.init.headers['x-grok-client-version'], '1.0.44');
     assert.equal(chatCall.init.headers['x-grok-model-override'], 'free-model');
+    assert.equal(chatCall.init.headers['x-userid'], 'test-user');
+    assert.equal(chatCall.init.headers['x-email'], 'test@example.invalid');
   } finally {
     upstream.restore();
   }
