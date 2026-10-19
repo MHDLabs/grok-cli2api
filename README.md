@@ -140,8 +140,8 @@ https://YOUR-WORKER.workers.dev/admin
 | Endpoint | Method | توضیح |
 |----------|--------|-------|
 | `/v1/chat/completions` | POST | چت با مدل‌های Grok |
-| `/v1/models` | GET | فقط مدل‌های رایگان/شامل پلن که وضعیتشان تأیید شده |
-| `/v1/models?capability=text` | GET | فقط مدل‌های متنی |
+| `/v1/models` | GET | فهرست خام upstream؛ بدون فیلتر و با حفظ status/بدنهٔ اصلی |
+| `/v1/models?capability=text` | GET | پارامتر query بدون تغییر به upstream ارسال می‌شود |
 | `/admin` | GET | پنل ادمین |
 
 ### استفاده در کد
@@ -252,9 +252,9 @@ b1a00492-073a-47ea-816f-4c329264a828
 
 ## 📋 لیست مدل‌ها
 
-لیست مدل‌ها هر ۵ دقیقه از سرویس اصلی دریافت و cache می‌شود. پیش از دریافت فهرست، پروژه وضعیت اشتراک حساب را از `/v1/user?include=subscription` می‌خواند. برای حساب Free، فهرست خود `/v1/models` به‌عنوان کاتالوگ همان سطح دسترسی استفاده می‌شود؛ مدل‌های مخفی یا پشتیبانی‌نشده برای API حذف می‌شوند. برای حساب‌های غیر Free، فقط مدل‌هایی نمایش داده می‌شوند که خود upstream صراحتاً رایگان/شامل پلن علامت‌گذاری کرده باشد. مدل‌های پولی یا نامشخص از روی اسم‌شان حدس زده نمی‌شوند و endpoint چت نیز همین فهرست را اجباری می‌کند.
+مدل‌ها مستقیماً از `https://cli-chat-proxy.grok.com/v1/models` دریافت می‌شوند. هیچ بررسی پلن، فیلتر رایگان/پولی، فیلتر مخفی‌بودن یا فهرست مدل محلی روی پاسخ API اعمال نمی‌شود؛ بدنه و status پاسخ upstream بدون بازسازی برگردانده می‌شوند. پارامترهای query نیز به upstream ارسال می‌شوند.
 
-اگر حساب غیر Free باشد و سرویس اصلی برای مدل‌ها اطلاعات صریح رایگان‌بودن ندهد، پروژه به‌جای نمایش احتمالی مدل‌های پولی، خطای مناسب برمی‌گرداند. در پنل ادمین، تب **Models** وضعیت همگام‌سازی، تعداد مدل‌های تأییدشده و تعداد حساب‌های Free/حذف‌شده را نشان می‌دهد.
+درخواست چت مستقیماً به `https://cli-chat-proxy.grok.com/v1/chat/completions` ارسال می‌شود. پروکسی قبل از ارسال، مدل را با فهرست خودش مقایسه نمی‌کند. اگر Grok پاسخ `model_not_found` با HTTP 404 برگرداند، همان status و بدنهٔ واقعی به کلاینت بازگردانده می‌شود؛ اگر چت موفق باشد نیز پاسخ واقعی upstream برمی‌گردد. تب **Models** در پنل ادمین هم فهرست زنده‌ای را از upstream می‌خواند. دسترسی نهایی به مدل و محدودیت پلن همچنان توسط خود Grok تعیین می‌شود.
 
 ## 🧪 مثال‌های استفاده
 
@@ -520,7 +520,7 @@ SOFTWARE.
 ### Prerequisites
 
 - A free [Cloudflare](https://dash.cloudflare.com/sign-up) account
-- A Grok account with an active subscription (SuperGrok or sufficient credits)
+- A Grok account that can complete OAuth login; the upstream decides model access and subscription limits
 
 ### Step 1: Create a KV Namespace
 
@@ -573,8 +573,8 @@ https://YOUR-WORKER.workers.dev/admin
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/chat/completions` | POST | Chat with Grok models |
-| `/v1/models` | GET | List only models whose free/included status is explicitly verified |
-| `/v1/models?capability=text` | GET | Text models only |
+| `/v1/models` | GET | Raw upstream model list; no local filtering, body/status passed through |
+| `/v1/models?capability=text` | GET | Query string is forwarded upstream unchanged |
 | `/admin` | GET | Admin panel |
 
 ### Basic Usage
@@ -685,9 +685,9 @@ The proxy sends all requests to xAI with the following headers:
 
 ## 📋 Model List
 
-The model catalogue is fetched from the upstream every five minutes and cached briefly. Before listing models, the proxy checks the account tier through `/v1/user?include=subscription`. For a Free account, the upstream `/v1/models` response is treated as the tier-specific catalogue; entries marked hidden or unsupported by the API are removed. For non-Free accounts, only models explicitly marked free/included by upstream metadata are exposed. Paid or unknown models are never guessed from their names, and the chat endpoint enforces the same allow-list.
+Models are fetched directly from `https://cli-chat-proxy.grok.com/v1/models`. The API applies no subscription check, free/paid filter, hidden-model filter, or local model allow-list; the upstream response body and HTTP status are passed through without rebuilding the response. Query parameters are forwarded upstream too.
 
-If a non-Free account's model response has no explicit free/included metadata, the proxy returns a clear error instead of risking advertising paid models. The admin panel's **Models** tab shows sync status, verified model count, and the number of Free vs. excluded accounts.
+Chat requests go straight to `https://cli-chat-proxy.grok.com/v1/chat/completions` with no local model-catalog check. If Grok returns `model_not_found` with HTTP 404, the same status and response body are returned to the client; successful responses are passed through the same way. The admin panel's **Models** tab also fetches the live model list from upstream. Grok itself remains the authority on model availability and account-tier limits.
 
 ## 🧪 Usage Examples
 
