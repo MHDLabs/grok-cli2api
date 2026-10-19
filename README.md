@@ -46,7 +46,7 @@
 - 🔑 **API Key اختصاصی** — کلیدهای مستقل با رهگیری مصرف
 - 💾 **ذخیره‌سازی روی KV** — بدون نیاز به دیتابیس خارجی
 - 🌊 **پشتیبانی از Stream** — پاسخ‌های SSE به سبک OpenAI
-- 📦 **بدون Environment Variable** — همه چیز در KV ذخیره می‌شود
+- 🔐 **راه‌اندازی امن** — رمز پنل در اولین اجرا تعریف می‌شود و مقدار `ADMIN_SETUP_SECRET` فقط برای راه‌اندازی اولیه لازم است
 - 🔄 **سازگاری کامل** — با هر کلاینت OpenAI-compatible (NextChat، LobeChat، Cursor، Continue.dev و ...)
 - 🌐 **CORS کامل** — برای استفاده در مرورگر و اپلیکیشن‌های وب
 
@@ -107,6 +107,7 @@
 3. Variable name: `GROK_KV`
 4. KV namespace: `GROK_KV`
 5. Save
+6. Under **Variables and Secrets**, add a secret named `ADMIN_SETUP_SECRET` with at least 32 random characters (for example, generate one with `openssl rand -hex 32`). Keep it private; it is used only to initialize the admin password.
 
 ### گام ۴: آپلود کد
 
@@ -197,7 +198,7 @@ console.log(response.choices[0].message.content);
 
 ## 🎛️ پنل ادمین
 
-پنل ادمین شامل سه تب اصلی است:
+پنل ادمین شامل تب‌های **اکانت‌ها، API Keys، Models (فهرست زنده و وضعیت دسترسی)** و **تنظیمات** است.
 
 ### ۱. تب اکانت‌ها
 
@@ -479,7 +480,7 @@ SOFTWARE.
 - 🔑 **Dedicated API Keys** — Independent keys with usage tracking
 - 💾 **KV Storage** — No external database required
 - 🌊 **Stream Support** — OpenAI-style SSE responses
-- 📦 **Zero Environment Variables** — Everything stored in KV
+- 🔐 **Secure first-run setup** — create the admin password on first launch; `ADMIN_SETUP_SECRET` is required only for initial setup
 - 🔄 **Full Compatibility** — Works with any OpenAI-compatible client (NextChat, LobeChat, Cursor, Continue.dev, etc.)
 - 🌐 **Full CORS** — Ready for browsers and web applications
 
@@ -555,9 +556,7 @@ Navigate to:
 https://YOUR-WORKER.workers.dev/admin
 ```
 
-**Default password:** `123456`
-
-> ⚠️ **Important:** Change the password immediately after first login via the **Settings** tab!
+**Initial setup:** On first visit, enter your one-time `ADMIN_SETUP_SECRET` from Cloudflare settings and create an admin password of at least 12 characters. The setup secret is not used for routine logins. There is no default password.
 
 ---
 
@@ -574,7 +573,7 @@ https://YOUR-WORKER.workers.dev/admin
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/chat/completions` | POST | Chat with Grok models |
-| `/v1/models` | GET | List all models |
+| `/v1/models` | GET | List only models whose free/included status is explicitly verified |
 | `/v1/models?capability=text` | GET | Text models only |
 | `/admin` | GET | Admin panel |
 
@@ -632,7 +631,7 @@ console.log(response.choices[0].message.content);
 
 ## 🎛️ Admin Panel
 
-The admin panel consists of three main tabs:
+The admin panel includes Accounts, API Keys, Models (live eligibility/sync status), and Settings tabs.
 
 ### 1. Accounts Tab
 
