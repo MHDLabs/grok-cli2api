@@ -284,19 +284,41 @@ function normalizeModelPayload(payload) {
         (Array.isArray(payload && payload.data) ? payload.data :
         (Array.isArray(payload && payload.models) ? payload.models : []));
     const seen = new Set();
-    return raw.filter(model => model && typeof model.id === 'string' && model.id.trim())
+    return raw.filter(model => model && [model.id, model.model, model.modelId]
+        .some(value => typeof value === 'string' && value.trim()))
         .map(model => ({
             ...model,
-            id: model.id.trim(),
+            id: String(model.id || model.model || model.modelId).trim(),
             object: model.object || 'model',
-            owned_by: model.owned_by || 'xai',
+            owned_by: model.owned_by || model.ownedBy || 'xai',
             capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
         }))
         .filter(model => {
-            if (seen.has(model.id)) return false;
+            if (!model.id || seen.has(model.id)) return false;
             seen.add(model.id);
             return true;
         });
+}
+
+function isApiModelSelectable(model) {
+    const meta = model && model._meta && typeof model._meta === 'object' ? model._meta : {};
+    const hidden = model.hidden === true || meta.hidden === true;
+    const supported = model.supportedInApi ?? model.supported_in_api ??
+        meta.supportedInApi ?? meta.supported_in_api;
+    return !hidden && supported !== false;
+}
+
+function subscriptionTierStatus(profile) {
+    const tier = profile && (profile.subscriptionTier ?? profile.subscription_tier);
+    // The upstream omits subscriptionTier for a personal Free account.
+    if (tier === undefined || tier === null || (typeof tier === 'string' && !tier.trim())) {
+        return { isFreeTier: true, tier: 'Free', tierReported: false };
+    }
+    if (typeof tier !== 'string') {
+        return { isFreeTier: false, tier: 'unknown', tierReported: true };
+    }
+    const normalized = tier.trim();
+    return { isFreeTier: normalized.toLowerCase() === 'free', tier: normalized, tierReported: true };
 }
 
 function explicitFreeState(model) {
@@ -418,78 +440,83 @@ async function fetchFreeModelsForAccount(env, account, force = false) {
     const fingerprint = await shortTokenFingerprint(account.access_token);
     const cacheKey = 'models:free:' + fingerprint;
     const cached = await kvGet(env, cacheKey);
-    if (!force && cached && Array.isArray(cached.models) &&
-        Date.now() - cached.fetchedAt < MODEL_CACHE_TTL) {
+    if (!force && cached && cached.verified === true &&
+        Date.now() - Number(cached.fetchedAt || 0) < MODEL_CACHE_TTL) {
         return { ...cached, fromCache: true };
     }
 
+    let freeTierConfirmed = false;
     try {
-        let modelRequest = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/models', {
+        const userId = accountUserId(account);
+        const userResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/user?include=subscription', {
             method: 'GET',
-            headers: { 'Accept': 'application/json' },
+            headers: {
+                'Accept': 'application/json',
+                ...(userId ? { 'x-userid': userId } : {}),
+                ...(account.email ? { 'x-email': String(account.email) } : {}),
+            },
         });
-        account = modelRequest.account;
-        if (!modelRequest.response.ok) {
-            throw new Error('Upstream model endpoint returned HTTP ' + modelRequest.response.status);
+        account = userResult.account;
+        if (!userResult.response.ok) {
+            throw new Error('Upstream subscription endpoint returned HTTP ' + userResult.response.status);
         }
-        const upstreamModels = normalizeModelPayload(await modelRequest.response.json());
-        if (!upstreamModels.length) throw new Error('Upstream model endpoint returned no valid model IDs');
+        const profile = await userResult.response.json();
+        const tier = subscriptionTierStatus(profile);
+        freeTierConfirmed = tier.isFreeTier;
 
-        const availableIds = new Set();
-        const blockedIds = new Set();
-        try {
-            const userId = accountUserId(account);
-            const modeRequest = await fetchAccountRequest(env, account, 'https://grok.com/rest/modes', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(userId ? { 'x-userid': userId } : {}),
-                    ...(account.email ? { 'x-email': String(account.email) } : {}),
-                },
-                body: JSON.stringify({ locale: 'en' }),
-            });
-            account = modeRequest.account;
-            if (modeRequest.response.ok) {
-                const modePayload = await modeRequest.response.json();
-                if (Array.isArray(modePayload && modePayload.modes)) {
-                    for (const mode of modePayload.modes) {
-                        if (!mode || typeof mode.id !== 'string') continue;
-                        const state = modeAvailability(mode);
-                        if (state === 'available') availableIds.add(mode.id);
-                        if (state === 'blocked') blockedIds.add(mode.id);
-                    }
-                }
-            }
-        } catch {
-            // Eligibility remains unknown unless /v1/models provides explicit free metadata.
+        const modelResult = await fetchAccountRequest(env, account, GROK_UPSTREAM + '/v1/models', {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                ...(userId ? { 'x-userid': userId } : {}),
+                ...(account.email ? { 'x-email': String(account.email) } : {}),
+            },
+        });
+        account = modelResult.account;
+        if (!modelResult.response.ok) {
+            throw new Error('Upstream model endpoint returned HTTP ' + modelResult.response.status);
         }
 
-        const hasEntitlementMetadata = availableIds.size > 0 || blockedIds.size > 0;
+        const upstreamModels = normalizeModelPayload(await modelResult.response.json())
+            .filter(isApiModelSelectable);
+        if (!upstreamModels.length) {
+            throw new Error('The upstream returned no API-supported models.');
+        }
+
+        // On a Free account, the official /v1/models endpoint is tier-aware and returns the catalog
+        // available to that tier. For non-Free accounts, expose only models that explicitly
+        // self-identify as free/included; never infer their price from names or model families.
         const models = upstreamModels.filter(model => {
-            const state = explicitFreeState(model);
-            if (blockedIds.has(model.id) || state !== true) return false;
-            return !hasEntitlementMetadata || availableIds.has(model.id);
+            const freeState = explicitFreeState(model);
+            if (freeState === false) return false;
+            return tier.isFreeTier || freeState === true;
         });
-        if (!models.length) {
-            throw new Error('The upstream did not expose an explicit free/included marker for any returned model. Plan availability alone is not proof of free usage.');
-        }
+
         const entry = {
             models,
             fetchedAt: Date.now(),
-            source: hasEntitlementMetadata ? 'cli-chat-proxy /v1/models + grok.com /rest/modes eligibility metadata' : 'explicit free/included metadata from upstream /v1/models',
+            source: tier.isFreeTier
+                ? 'cli-chat-proxy /v1/user?include=subscription + tier-specific /v1/models'
+                : 'cli-chat-proxy /v1/user?include=subscription + explicit free metadata from /v1/models',
             verified: true,
-            error: null,
+            isFreeTier: tier.isFreeTier,
+            accountTier: tier.tier,
+            tierReported: tier.tierReported,
+            error: models.length ? null : (tier.isFreeTier
+                ? 'The upstream returned no API-supported models for this Free account.'
+                : 'This account is not on the Free tier and the model catalogue has no explicit free/included metadata.'),
         };
         await kvPut(env, cacheKey, entry);
         return { ...entry, fromCache: false };
     } catch (error) {
-        if (cached && Array.isArray(cached.models) && cached.models.length &&
-            Date.now() - Number(cached.fetchedAt || 0) < MODEL_STALE_TTL) {
+        // Stale model data may be reused only after this request confirms the account is still Free.
+        if (freeTierConfirmed && cached && cached.isFreeTier === true &&
+            Array.isArray(cached.models) && Date.now() - Number(cached.fetchedAt || 0) < MODEL_STALE_TTL) {
             return {
                 ...cached,
                 fromCache: true,
                 stale: true,
-                error: 'Live refresh failed; serving the last verified catalogue temporarily.',
+                error: 'Live model refresh failed; serving the last verified Free-tier catalogue temporarily.',
             };
         }
         return {
@@ -497,8 +524,11 @@ async function fetchFreeModelsForAccount(env, account, force = false) {
             fetchedAt: null,
             source: null,
             verified: false,
+            isFreeTier: freeTierConfirmed,
+            accountTier: null,
+            tierReported: false,
             fromCache: false,
-            error: String(error && error.message || 'Unable to verify free model availability'),
+            error: String(error && error.message || 'Unable to verify account tier and model catalogue'),
         };
     }
 }
@@ -524,15 +554,18 @@ async function getFreeModelCatalog(env, force = false) {
     const models = Array.from(byId.values());
     const timestamps = results.map(result => result.fetchedAt || 0).filter(Boolean);
     const errors = results.map(result => result.error).filter(Boolean);
+    const freeTierAccounts = results.filter(result => result.isFreeTier === true).length;
     return {
         models,
         fetchedAt: timestamps.length ? Math.max(...timestamps) : null,
         source: results.find(result => result.source)?.source || null,
-        verified: models.length > 0 && results.some(result => result.verified),
+        verified: results.some(result => result.verified === true),
         stale: results.some(result => result.stale),
         fromCache: results.every(result => result.fromCache),
-        error: models.length ? (errors.length ? errors.join('; ') : null) : (errors[0] || 'No verified free models are available.'),
+        error: models.length ? null : (errors[0] || 'No verified free models are available. Configure a Free-tier account or an explicit upstream free-model marker.'),
         accountCount: active.length,
+        freeTierAccountCount: freeTierAccounts,
+        excludedAccountCount: active.length - freeTierAccounts,
     };
 }
 
@@ -1297,7 +1330,14 @@ export default {
             if ((path === '/admin/api/models' && request.method === 'GET') || (path === '/admin/api/models/refresh' && request.method === 'POST')) {
                 const catalog = await getFreeModelCatalog(env, request.method === 'POST');
                 return json({
-                    models: catalog.models || [],
+                    models: (catalog.models || []).map(model => ({
+                        id: model.id,
+                        name: typeof model.name === 'string' ? model.name : model.id,
+                        description: typeof model.description === 'string' ? model.description : null,
+                        capabilities: Array.isArray(model.capabilities) ? model.capabilities : [],
+                        created: Number.isFinite(model.created) ? model.created : null,
+                        owned_by: typeof model.owned_by === 'string' ? model.owned_by : 'xai',
+                    })),
                     count: (catalog.models || []).length,
                     fetched_at: catalog.fetchedAt || null,
                     source: catalog.source || null,
@@ -1305,6 +1345,8 @@ export default {
                     stale: !!catalog.stale,
                     error: catalog.error || null,
                     account_count: catalog.accountCount || 0,
+                    free_tier_account_count: catalog.freeTierAccountCount || 0,
+                    excluded_account_count: catalog.excludedAccountCount || 0,
                 });
             }
 
